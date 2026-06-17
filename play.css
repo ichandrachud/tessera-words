@@ -144,6 +144,26 @@ html, body {
   letter-spacing: 1.4px;
 }
 
+/* ---------- SPLASH ---------- */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-color: var(--bg);                          /* navy fallback while image loads */
+  background-image: url('./splash.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transition: opacity 0.6s ease-out;
+  /* During the 2 s reveal, swallow any clicks so a player can't accidentally
+     drop tiles in the game underneath. */
+  pointer-events: auto;
+}
+.splash.fading {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ---------- FOCUS / PHONE-VIEW BUTTON ---------- */
 .focus-btn {
   position: fixed;
