@@ -3,12 +3,11 @@
 
    Drag the dots so no two edges cross. Each press-drag-release that
    actually moves a vertex counts as 1 move. Par = number of vertices
-   the daily generator perturbed when scrambling the planar layout.
-   Same graph every day for everyone.
+   the level generator perturbed when scrambling the planar layout.
 
-   Two-mode codebase (desktop / mobile dynamic) lifted from Tessera so
-   future Zamborin Games share a single scaffold for splash, instructions,
-   banner, focus mode, reduced-motion, mobile-fit and Dark Portal palette.
+   Endless level progression: tiers ramp from TUTORIAL (5 dots) up to
+   MASTER (12 dots) and then keep generating progressively harder
+   MASTER-tier puzzles forever. Highest level is saved locally.
    ============================================================ */
 (() => {
   'use strict';
@@ -18,11 +17,10 @@
     ? 'mobile' : 'desktop';
   document.body.classList.add('mode-' + MODE);
 
-  // Per-mode canvas + playfield geometry.
   function buildMobileCFG() {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const HUD_H        = 56;
+    const HUD_H        = 70;
     const BANNER_H     = 50;
     const BOTTOM_PAD   = 22;
     const HINT_AREA    = 36;
@@ -43,13 +41,13 @@
     };
   }
   const CFG = MODE === 'mobile' ? buildMobileCFG() : (() => {
-    const W = 760, H = 570, HUD_H = 56;
+    const W = 760, H = 600, HUD_H = 70;
     return {
       W, H, HUD_H,
       PLAY_X: 44,
       PLAY_Y: HUD_H + 8,
       PLAY_W: W - 88,
-      PLAY_H: H - HUD_H - 8 - 36 - 8,  // HUD + gap + hint band + bottom padding
+      PLAY_H: H - HUD_H - 8 - 36 - 8,
       VERTEX_R: 12,
       VERTEX_HIT: 22,
       BANNER_W: 0, BANNER_H: 0,
@@ -105,36 +103,23 @@
     text:       '#FFFFFF',
     textDim:    '#C5CFE0',
     textMute:   '#8E9CB5',
-    accent:     '#D8523F',           // coral (AA-pass on white text)
+    accent:     '#D8523F',
     accentHi:   '#FF6B5C',
-    aligned:    '#5DD39E',           // mint — win/clear
+    aligned:    '#5DD39E',
     panel:      '#1A2A45',
     panel2:     '#22355A',
     line:       'rgba(255, 255, 255, 0.08)',
-    edgeOK:     '#7E94B5',           // calm gray-blue edge
-    edgeCross:  '#FF6B5C',           // pulsing coral when this edge crosses another
-    vertexDrag: '#FFD23F',           // sunshine yellow while held
-    crossDot:   '#FFD23F',           // mark on intersection
+    edgeOK:     '#7E94B5',
+    edgeCross:  '#FF6B5C',
+    vertexDrag: '#FFD23F',
+    crossDot:   '#FFD23F',
     overlay:    'rgba(14, 23, 38, 0.92)',
   };
 
-  // 12 candy colours for the vertices — each dot gets its own identity so the
-  // graph reads as a constellation rather than a uniform field of blue. With
-  // N capped at 12 (EXPERT tier) every dot is a distinct hue.
-  // All bodies hold ≥4.5:1 against a white inner-highlight overlay.
   const VERTEX_PALETTE = [
-    '#E84855', // cherry red
-    '#3D5AFE', // royal blue
-    '#FFD23F', // sunshine yellow
-    '#00897B', // emerald
-    '#D85B0E', // burnt orange
-    '#7E57C2', // royal purple
-    '#5DD39E', // mint
-    '#C2185B', // magenta rose
-    '#4ECDC4', // teal cyan
-    '#F4A261', // amber
-    '#B084CC', // lavender
-    '#FF6B9D', // pink
+    '#E84855', '#3D5AFE', '#FFD23F', '#00897B',
+    '#D85B0E', '#7E57C2', '#5DD39E', '#C2185B',
+    '#4ECDC4', '#F4A261', '#B084CC', '#FF6B9D',
   ];
 
   // ---------- SEEDED PRNG ----------
@@ -158,43 +143,22 @@
   }
   let rng = Math.random;
 
-  // ---------- DAILY CHALLENGE ----------
-  // Shared Zamborin epoch — Day 1 = 2026-05-30 (same as Tessera).
-  const EPOCH_Y = 2026, EPOCH_M = 5, EPOCH_D = 30;
-  function todayString() {
-    const d = new Date();
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  }
-  function realDayNumber() {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const launch = new Date(EPOCH_Y, EPOCH_M - 1, EPOCH_D);
-    return Math.max(1, Math.floor((today - launch) / 86400000) + 1);
-  }
-  function dayNumber() {
-    try {
-      const p = new URLSearchParams(window.location.search);
-      const d = parseInt(p.get('day'), 10);
-      if (!isNaN(d) && d >= 1) return d;
-    } catch (_) {}
-    return realDayNumber();
-  }
-  function dailySeedString() {
-    return 'zamborin-untangle-day-' + dayNumber();
+  // ---------- LEVEL CURVE ----------
+  // Each level is a fixed (N, edges, perturbPct, name). Past level 38 the
+  // tier stays MASTER but the seed advances, so the puzzles keep changing.
+  function tierForLevel(level) {
+    if (level <= 2)  return { name: 'TUTORIAL', N: 5,  edges: 7,  perturbPct: 0.45 };
+    if (level <= 4)  return { name: 'BASIC',    N: 6,  edges: 9,  perturbPct: 0.55 };
+    if (level <= 7)  return { name: 'EASY',     N: 7,  edges: 11, perturbPct: 0.60 };
+    if (level <= 11) return { name: 'MEDIUM',   N: 8,  edges: 13, perturbPct: 0.65 };
+    if (level <= 16) return { name: 'HARD',     N: 9,  edges: 15, perturbPct: 0.70 };
+    if (level <= 22) return { name: 'HARDER',   N: 10, edges: 17, perturbPct: 0.75 };
+    if (level <= 30) return { name: 'EXPERT',   N: 11, edges: 19, perturbPct: 0.80 };
+    return                  { name: 'MASTER',   N: 12, edges: 21, perturbPct: 0.85 };
   }
 
-  // ---------- DIFFICULTY ----------
-  const TIERS = [
-    { name: 'TUTORIAL', minDay: 1,  maxDay: 3,     N: 6,  edges: 8,  perturbPct: 0.50 },
-    { name: 'EASY',     minDay: 4,  maxDay: 10,    N: 7,  edges: 11, perturbPct: 0.60 },
-    { name: 'MEDIUM',   minDay: 11, maxDay: 21,    N: 9,  edges: 14, perturbPct: 0.70 },
-    { name: 'HARD',     minDay: 22, maxDay: 35,    N: 10, edges: 17, perturbPct: 0.75 },
-    { name: 'HARDER',   minDay: 36, maxDay: 50,    N: 11, edges: 19, perturbPct: 0.80 },
-    { name: 'EXPERT',   minDay: 51, maxDay: 99999, N: 12, edges: 21, perturbPct: 0.85 },
-  ];
-  function tierForDay(d) {
-    for (const t of TIERS) if (d >= t.minDay && d <= t.maxDay) return t;
-    return TIERS[TIERS.length - 1];
+  function levelSeedString(level) {
+    return 'zamborin-untangle-level-' + level;
   }
 
   // ---------- GRAPH GENERATION ----------
@@ -217,7 +181,7 @@
       edges.push([Math.min(a, b), Math.max(a, b)]);
       return true;
     }
-    for (let i = 0; i < N; i++) addEdge(i, (i + 1) % N);          // outer cycle
+    for (let i = 0; i < N; i++) addEdge(i, (i + 1) % N);
     let attempts = 0;
     while (edges.length < targetEdges && attempts < targetEdges * 30) {
       attempts++;
@@ -252,6 +216,43 @@
     return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
   }
 
+  // ---------- AUDIO ----------
+  // Lazy-init on first user gesture (browser autoplay policy).
+  let audioCtx = null;
+  let soundOn = localStorage.getItem('zamborin-untangle.sound') !== '0';
+  function ensureAudio() {
+    if (audioCtx) return;
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (_) { audioCtx = null; }
+  }
+  function setSound(on) {
+    soundOn = on;
+    try { localStorage.setItem('zamborin-untangle.sound', on ? '1' : '0'); } catch (_) {}
+  }
+  function tone(freq, dur, gain, type) {
+    if (!soundOn || !audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.02);
+  }
+  function sfxPickup()  { tone(680, 0.06, 0.035, 'sine'); }
+  function sfxDrop()    { tone(420, 0.08, 0.04,  'sine'); }
+  function sfxResolve() { tone(900, 0.09, 0.045, 'triangle'); }
+  function sfxStart()   { tone(523, 0.10, 0.05,  'triangle'); setTimeout(() => tone(784, 0.12, 0.05, 'triangle'), 80); }
+  function sfxWin() {
+    tone(523, 0.13, 0.06, 'triangle');
+    setTimeout(() => tone(659, 0.13, 0.06, 'triangle'),  90);
+    setTimeout(() => tone(784, 0.13, 0.06, 'triangle'), 180);
+    setTimeout(() => tone(1047, 0.22, 0.07,'triangle'), 280);
+  }
+
   // ---------- STATE ----------
   let scene = 'instructions';   // 'instructions' | 'playing' | 'won'
   let awaitingStart = true;
@@ -260,25 +261,37 @@
   let N = 9;
   let par = 0;
   let moves = 0;
-  let runDay = dayNumber();
-  let runTier = tierForDay(runDay);
+
+  let runLevel = parseInt(localStorage.getItem('zamborin-untangle.level') || '1', 10);
+  if (!Number.isFinite(runLevel) || runLevel < 1) runLevel = 1;
+  let runTier = tierForLevel(runLevel);
+
+  let highestLevel = parseInt(localStorage.getItem('zamborin-untangle.highest') || '1', 10);
+  if (!Number.isFinite(highestLevel) || highestLevel < 1) highestLevel = 1;
 
   let dragIdx   = -1;
   let dragOrigin = null;
   let dragMovedFar = false;
+  let crossingsAtPress = 0;
 
-  function bestKey() { return 'zamborin-untangle.best.' + todayString(); }
-  let dailyBest = parseInt(localStorage.getItem(bestKey()) || '0', 10) || null;
+  function bestKey(level) { return 'zamborin-untangle.best.L' + level; }
+  function getBest(level) {
+    const v = parseInt(localStorage.getItem(bestKey(level)) || '0', 10);
+    return v > 0 ? v : null;
+  }
+  let bestThisLevel = getBest(runLevel);
 
   const START_BTN = { x: 0, y: 0, w: 0, h: 0 };
   const SHARE_BTN = { x: 0, y: 0, w: 0, h: 0 };
+  const NEXT_BTN  = { x: 0, y: 0, w: 0, h: 0 };
+  const SOUND_BTN = { x: 0, y: 0, w: 0, h: 0 };
   function inRect(r, lx, ly) { return r.w > 0 && lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h; }
 
   // ---------- INIT ----------
-  function initGame() {
-    rng = mulberry32(hashSeed(dailySeedString()));
-    runDay = dayNumber();
-    runTier = tierForDay(runDay);
+  function initLevel(level) {
+    runLevel = level;
+    runTier  = tierForLevel(level);
+    rng = mulberry32(hashSeed(levelSeedString(level)));
     N = runTier.N;
     edges = generateGraphTopology(N, runTier.edges);
 
@@ -308,6 +321,8 @@
     moves = 0;
     scene = 'playing';
     dragIdx = -1;
+    bestThisLevel = getBest(runLevel);
+    try { localStorage.setItem('zamborin-untangle.level', String(runLevel)); } catch (_) {}
   }
 
   // ---------- CROSSING DETECTION ----------
@@ -356,15 +371,27 @@
 
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    ensureAudio();
     const { lx, ly } = logical(e.clientX, e.clientY);
 
+    // Sound toggle is always live (instructions screen + playing + won)
+    if (inRect(SOUND_BTN, lx, ly)) {
+      setSound(!soundOn);
+      if (soundOn) tone(660, 0.06, 0.04, 'sine');
+      return;
+    }
+
     if (awaitingStart) {
-      if (inRect(START_BTN, lx, ly)) { awaitingStart = false; initGame(); }
+      if (inRect(START_BTN, lx, ly)) {
+        awaitingStart = false;
+        sfxStart();
+        initLevel(runLevel);
+      }
       return;
     }
     if (scene === 'won') {
+      if (inRect(NEXT_BTN, lx, ly))  { initLevel(runLevel + 1); return; }
       if (inRect(SHARE_BTN, lx, ly)) { copyShareString(); return; }
-      initGame();                                  // tap elsewhere to play again
       return;
     }
     if (scene !== 'playing') return;
@@ -373,6 +400,8 @@
     dragIdx = idx;
     dragOrigin = { x: pos[idx].x, y: pos[idx].y };
     dragMovedFar = false;
+    crossingsAtPress = detectCrossings().crossings;
+    sfxPickup();
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   });
   canvas.addEventListener('pointermove', (e) => {
@@ -391,7 +420,15 @@
     e.preventDefault();
     if (dragMovedFar) {
       moves++;
-      if (detectCrossings().crossings === 0) onWin();
+      const after = detectCrossings().crossings;
+      if (after === 0) {
+        sfxWin();
+        onWin();
+      } else if (after < crossingsAtPress) {
+        sfxResolve();
+      } else {
+        sfxDrop();
+      }
     }
     dragIdx = -1; dragOrigin = null; dragMovedFar = false;
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
@@ -401,20 +438,31 @@
   });
 
   window.addEventListener('keydown', (e) => {
+    if (e.key === 'm' || e.key === 'M') {
+      ensureAudio();
+      setSound(!soundOn);
+      if (soundOn) tone(660, 0.06, 0.04, 'sine');
+      return;
+    }
     if (awaitingStart && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault(); awaitingStart = false; initGame(); return;
+      e.preventDefault(); ensureAudio(); awaitingStart = false; sfxStart(); initLevel(runLevel); return;
     }
     if (scene === 'won' && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault(); initGame();
+      e.preventDefault(); initLevel(runLevel + 1);
     }
   });
 
   function onWin() {
     scene = 'won';
-    if (dailyBest == null || moves < dailyBest) {
-      dailyBest = moves;
-      try { localStorage.setItem(bestKey(), String(moves)); } catch (_) {}
+    if (bestThisLevel == null || moves < bestThisLevel) {
+      bestThisLevel = moves;
+      try { localStorage.setItem(bestKey(runLevel), String(moves)); } catch (_) {}
     }
+    if (runLevel + 1 > highestLevel) {
+      highestLevel = runLevel + 1;
+      try { localStorage.setItem('zamborin-untangle.highest', String(highestLevel)); } catch (_) {}
+    }
+    try { localStorage.setItem('zamborin-untangle.level', String(runLevel + 1)); } catch (_) {}
   }
 
   // ---------- DRAWING ----------
@@ -428,31 +476,84 @@
     ctx.closePath();
   }
 
+  function drawSoundButton() {
+    const btnSize = 28;
+    const padding = 12;
+    const bx = W - padding - btnSize;
+    const by = padding;
+    SOUND_BTN.x = bx; SOUND_BTN.y = by; SOUND_BTN.w = btnSize; SOUND_BTN.h = btnSize;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    roundRect(bx, by, btnSize, btnSize, 6);
+    ctx.fill();
+
+    // speaker glyph
+    const cx = bx + btnSize / 2;
+    const cy = by + btnSize / 2;
+    ctx.fillStyle = soundOn ? C.text : C.textMute;
+    ctx.strokeStyle = soundOn ? C.text : C.textMute;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - 7, cy - 3);
+    ctx.lineTo(cx - 3, cy - 3);
+    ctx.lineTo(cx + 1, cy - 6);
+    ctx.lineTo(cx + 1, cy + 6);
+    ctx.lineTo(cx - 3, cy + 3);
+    ctx.lineTo(cx - 7, cy + 3);
+    ctx.closePath();
+    ctx.fill();
+    if (soundOn) {
+      ctx.beginPath();
+      ctx.arc(cx + 3, cy, 3, -Math.PI / 3, Math.PI / 3);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx + 3, cy, 6, -Math.PI / 3, Math.PI / 3);
+      ctx.stroke();
+    } else {
+      // slash through icon when muted
+      ctx.strokeStyle = C.accent;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(bx + 4, by + btnSize - 4);
+      ctx.lineTo(bx + btnSize - 4, by + 4);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawHUD() {
+    // LEFT: MOVES
     ctx.font = '700 11px Inter, sans-serif';
     ctx.fillStyle = C.textMute;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText('MOVES', PLAY_X, 16);
+    ctx.fillText('MOVES', PLAY_X, 18);
     ctx.font = '800 24px Inter, sans-serif';
     ctx.fillStyle = C.text;
-    ctx.fillText(String(moves), PLAY_X, 38);
+    ctx.fillText(String(moves), PLAY_X, 42);
 
+    // CENTER: LEVEL + tier name
     ctx.font = '700 11px Inter, sans-serif';
     ctx.fillStyle = C.textMute;
     ctx.textAlign = 'center';
-    ctx.fillText('PAR', W / 2, 16);
+    ctx.fillText('LEVEL', W / 2, 18);
     ctx.font = '800 24px Inter, sans-serif';
-    ctx.fillStyle = moves > par ? C.accent : C.text;
-    ctx.fillText(String(par), W / 2, 38);
+    ctx.fillStyle = C.text;
+    ctx.fillText(String(runLevel), W / 2, 42);
+    ctx.font = '700 11px Inter, sans-serif';
+    ctx.fillStyle = C.accent;
+    ctx.fillText(runTier.name, W / 2, 60);
 
+    // RIGHT: PAR
     ctx.font = '700 11px Inter, sans-serif';
     ctx.fillStyle = C.textMute;
     ctx.textAlign = 'right';
-    ctx.fillText('DAY', PLAY_X + PLAY_W, 16);
+    ctx.fillText('PAR', PLAY_X + PLAY_W, 18);
     ctx.font = '800 24px Inter, sans-serif';
-    ctx.fillStyle = C.text;
-    ctx.fillText(String(runDay), PLAY_X + PLAY_W, 38);
+    ctx.fillStyle = moves > par ? C.accent : C.text;
+    ctx.fillText(String(par), PLAY_X + PLAY_W, 42);
   }
 
   function drawPlayfield() {
@@ -468,7 +569,6 @@
       const p1 = pos[a], p2 = pos[b];
       const crossing = crossInfo.edgeCrossing[i];
       if (crossing) {
-        // Crossing edge — pulse a coral glow + draw the line in coral
         ctx.save();
         ctx.shadowColor = C.accentHi;
         ctx.shadowBlur = 8 + 6 * pulse;
@@ -477,7 +577,6 @@
         ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
         ctx.restore();
       } else {
-        // Calm edge — subtle outer glow for depth
         ctx.save();
         ctx.shadowColor = 'rgba(101, 119, 255, 0.35)';
         ctx.shadowBlur = 4;
@@ -502,15 +601,12 @@
       const p = pos[i];
       const isDrag = i === dragIdx;
       const baseColor = VERTEX_PALETTE[i % VERTEX_PALETTE.length];
-      // Outer glow — coloured halo so each dot's identity reads in peripheral vision.
       ctx.save();
       ctx.shadowColor = isDrag ? C.vertexDrag : baseColor;
       ctx.shadowBlur = isDrag ? (10 + 6 * pulse) : 8;
       ctx.fillStyle = isDrag ? C.vertexDrag : baseColor;
       ctx.beginPath(); ctx.arc(p.x, p.y, VERTEX_R, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
-      // Inner specular highlight — white-ish, scaled by colour brightness so
-      // light/dark vertex bodies both get a believable sheen.
       ctx.fillStyle = isDrag ? '#FFEAB4' : 'rgba(255, 255, 255, 0.55)';
       ctx.beginPath(); ctx.arc(p.x - VERTEX_R * 0.25, p.y - VERTEX_R * 0.25, VERTEX_R * 0.35, 0, Math.PI * 2); ctx.fill();
     }
@@ -563,27 +659,37 @@
     ctx.textBaseline = 'middle';
     ctx.font = '700 11px Inter, sans-serif';
     ctx.fillStyle = C.accent;
-    ctx.fillText('HOW TO PLAY', midX, midY - 160);
+    ctx.fillText('HOW TO PLAY', midX, midY - 170);
 
     ctx.font = '800 ' + (MODE === 'mobile' ? 32 : 36) + 'px Inter, sans-serif';
     ctx.fillStyle = C.text;
-    ctx.fillText('Untangle', midX, midY - 120);
+    ctx.fillText('Untangle', midX, midY - 130);
 
     const rules = [
       'Drag any dot to move it.',
       'Edges that cross another edge pulse red.',
       'Goal: remove every crossing.',
-      'Same puzzle for everyone today.',
+      'Each level adds more dots and edges.',
     ];
-    ctx.font = '500 14px Inter, sans-serif';
+    ctx.font = '500 16px Inter, sans-serif';
     ctx.fillStyle = C.textDim;
-    const lineH = 24;
+    const lineH = 26;
     const rulesTop = midY - 60;
     for (let i = 0; i < rules.length; i++) ctx.fillText(rules[i], midX, rulesTop + i * lineH);
 
+    // Show resume / new label
+    ctx.font = '700 11px Inter, sans-serif';
+    ctx.fillStyle = C.textMute;
+    const resumeY = rulesTop + rules.length * lineH + 12;
+    if (runLevel > 1) {
+      ctx.fillText('RESUMING AT LEVEL ' + runLevel + ' · ' + runTier.name, midX, resumeY);
+    } else {
+      ctx.fillText('STARTING AT LEVEL 1 · TUTORIAL', midX, resumeY);
+    }
+
     const btnW = MODE === 'mobile' ? 240 : 280;
     const btnH = MODE === 'mobile' ? 56 : 52;
-    const btnY = rulesTop + rules.length * lineH + 28;
+    const btnY = resumeY + 22;
     const btnX = midX - btnW / 2;
     START_BTN.x = btnX; START_BTN.y = btnY; START_BTN.w = btnW; START_BTN.h = btnH;
     ctx.fillStyle = C.accent;
@@ -591,7 +697,7 @@
     ctx.fill();
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '700 14px Inter, sans-serif';
-    ctx.fillText('START', midX, btnY + btnH / 2 + 1);
+    ctx.fillText(runLevel > 1 ? 'CONTINUE' : 'START', midX, btnY + btnH / 2 + 1);
   }
 
   // ---------- WIN ----------
@@ -607,21 +713,21 @@
 
     ctx.font = '700 14px Inter, sans-serif';
     ctx.fillStyle = C.aligned;
-    ctx.fillText('UNTANGLED', midX, midY - 120);
+    ctx.fillText('LEVEL ' + runLevel + ' UNTANGLED', midX, midY - 150);
 
     ctx.font = '800 56px Inter, sans-serif';
     ctx.fillStyle = C.text;
-    ctx.fillText(String(moves), midX, midY - 60);
+    ctx.fillText(String(moves), midX, midY - 88);
     ctx.font = '500 11px Inter, sans-serif';
     ctx.fillStyle = C.textDim;
-    ctx.fillText('YOUR MOVES', midX, midY - 24);
+    ctx.fillText('YOUR MOVES', midX, midY - 52);
 
     ctx.font = '500 24px Inter, sans-serif';
     ctx.fillStyle = C.text;
-    ctx.fillText(String(par), midX, midY + 12);
+    ctx.fillText(String(par), midX, midY - 16);
     ctx.font = '500 11px Inter, sans-serif';
     ctx.fillStyle = C.textDim;
-    ctx.fillText('PAR', midX, midY + 30);
+    ctx.fillText('PAR', midX, midY + 2);
 
     let verdict, color;
     if (moves < par)        { verdict = 'UNDER PAR · BRILLIANT'; color = C.aligned; }
@@ -630,24 +736,39 @@
     else                    { verdict = '+' + (moves - par) + ' OVER PAR'; color = C.textDim; }
     ctx.font = '700 13px Inter, sans-serif';
     ctx.fillStyle = color;
-    ctx.fillText(verdict, midX, midY + 64);
+    ctx.fillText(verdict, midX, midY + 32);
 
-    const btnW = 240, btnH = 48;
+    // PRIMARY: NEXT LEVEL
+    const btnW = MODE === 'mobile' ? 240 : 260;
+    const btnH = 48;
     const btnX = midX - btnW / 2;
-    const shareY = midY + 96;
-    SHARE_BTN.x = btnX; SHARE_BTN.y = shareY; SHARE_BTN.w = btnW; SHARE_BTN.h = btnH;
+    const nextY = midY + 64;
+    NEXT_BTN.x = btnX; NEXT_BTN.y = nextY; NEXT_BTN.w = btnW; NEXT_BTN.h = btnH;
     ctx.fillStyle = C.accent;
-    roundRect(btnX, shareY, btnW, btnH, btnH / 2);
+    roundRect(btnX, nextY, btnW, btnH, btnH / 2);
     ctx.fill();
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 13px Inter, sans-serif';
-    ctx.fillText('SHARE RESULT', midX, shareY + btnH / 2 + 1);
+    ctx.font = '700 14px Inter, sans-serif';
+    ctx.fillText('NEXT LEVEL  →', midX, nextY + btnH / 2 + 1);
+
+    // SECONDARY: SHARE (ghost button)
+    const shareY = nextY + btnH + 12;
+    SHARE_BTN.x = btnX; SHARE_BTN.y = shareY; SHARE_BTN.w = btnW; SHARE_BTN.h = 40;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.20)';
+    ctx.lineWidth = 1.5;
+    roundRect(btnX, shareY, btnW, 40, 20);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = C.textDim;
+    ctx.font = '700 12px Inter, sans-serif';
+    ctx.fillText('SHARE RESULT', midX, shareY + 40 / 2 + 1);
 
     const pulse = 0.55 + 0.45 * Math.sin(now / 350);
     ctx.globalAlpha = pulse;
     ctx.font = '700 11px Inter, sans-serif';
-    ctx.fillStyle = C.text;
-    ctx.fillText('TAP ELSEWHERE TO TRY AGAIN', midX, shareY + btnH + 22);
+    ctx.fillStyle = C.textMute;
+    ctx.fillText('PRESS ENTER FOR NEXT LEVEL', midX, shareY + 40 + 22);
     ctx.globalAlpha = 1;
   }
 
@@ -658,7 +779,7 @@
     if (moves < par)        verdict = 'under par by ' + (par - moves);
     else if (moves === par) verdict = 'at par';
     else                    verdict = '+' + (moves - par) + ' over par';
-    const text = 'I untangled Day ' + runDay + ' · ' + runTier.name + '\n'
+    const text = 'I untangled Level ' + runLevel + ' · ' + runTier.name + '\n'
                + moves + ' moves (par ' + par + ') · ' + verdict + '\n'
                + 'Untangle, a Zamborin Game';
     return { title: 'Untangle', text, url: homeURL() };
@@ -693,6 +814,7 @@
 
     if (awaitingStart) {
       drawInstructions();
+      drawSoundButton();
       drawBannerAd();
       requestAnimationFrame(loop);
       return;
@@ -705,6 +827,7 @@
     drawCrossDots(crossInfo);
     drawVertices(now);
     drawHintRow();
+    drawSoundButton();
     drawBannerAd();
 
     if (scene === 'won') drawWon(now);
