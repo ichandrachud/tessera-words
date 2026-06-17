@@ -20,11 +20,13 @@
       <img class="brand-logo" src="/images/zamborin-logo.svg" alt="Zamborin" />
     </a>
     <div class="header-right">
-      <button id="focus-toggle" class="focus-btn" type="button" aria-label="Toggle phone-view focus mode" aria-pressed="false">
-        <!-- enter-focus icon: landscape phone outline -->
+      <button id="focus-toggle" class="focus-btn" type="button" aria-label="Play fullscreen" aria-pressed="false">
+        <!-- enter-focus icon: four corner brackets expanding outward -->
         <svg class="icon-enter" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="2" y="6" width="20" height="12" rx="2.5"/>
-          <circle cx="19" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+          <polyline points="4 9 4 4 9 4"/>
+          <polyline points="20 9 20 4 15 4"/>
+          <polyline points="4 15 4 20 9 20"/>
+          <polyline points="20 15 20 20 15 20"/>
         </svg>
         <!-- exit-focus icon: close (×) -->
         <svg class="icon-exit" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -79,7 +81,7 @@
       btn.addEventListener('click', () => {
         const on = document.body.classList.toggle('focus-mode');
         btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        btn.setAttribute('aria-label', on ? 'Exit phone-view focus mode' : 'Enter phone-view focus mode');
+        btn.setAttribute('aria-label', on ? 'Exit fullscreen' : 'Play fullscreen');
         // Canvas reads its own CSS dimensions on resize; trigger one so the backing store updates.
         setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
       });
