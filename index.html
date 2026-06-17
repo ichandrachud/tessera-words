@@ -10,6 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./shared/tokens.css" />
+  <link rel="stylesheet" href="./shared/chrome.css" />
 
   <style>
     body {
@@ -21,29 +22,12 @@
       flex: 1;
       max-width: 1000px;
       margin: 0 auto;
-      padding: 80px 24px 40px;
+      padding: 48px 24px 40px;
       display: flex;
       flex-direction: column;
-      gap: 56px;
+      gap: 32px;
       width: 100%;
       box-sizing: border-box;
-    }
-    .lobby-head { text-align: center; }
-    .lobby-mark {
-      font-size: 56px;
-      font-weight: 800;
-      letter-spacing: 5px;
-      color: var(--brand);
-      line-height: 1;
-      margin: 0 0 14px;
-    }
-    .lobby-tag {
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 2.4px;
-      color: var(--text-mute);
-      text-transform: uppercase;
-      margin: 0;
     }
     .games-row {
       display: flex;
@@ -127,9 +111,7 @@
     }
 
     @media (max-width: 720px) {
-      .lobby { padding: 48px 16px 24px; gap: 36px; }
-      .lobby-mark { font-size: 40px; letter-spacing: 3px; }
-      .lobby-tag { font-size: 12px; letter-spacing: 2px; }
+      .lobby { padding: 32px 16px 24px; gap: 24px; }
       .games-row { gap: 20px; }
       .game-card { grid-template-columns: 1fr; min-height: 0; }
       .game-card-image,
@@ -158,11 +140,13 @@
   </style>
 </head>
 <body>
-  <main class="lobby">
-    <header class="lobby-head">
-      <h1 class="lobby-mark">ZAMBORIN</h1>
-    </header>
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-mark">ZAMBORIN</span>
+    </div>
+  </header>
 
+  <main class="lobby">
     <div class="games-row">
       <a class="game-card" href="./tessera/">
         <div class="game-card-image" style="background-image: url('./images/tessera-teaser.jpg')"></div>
