@@ -52,7 +52,7 @@
     }
     .game-card {
       display: grid;
-      grid-template-columns: 340px 1fr;
+      grid-template-columns: 1fr 1fr;
       background: #14213D;
       border-radius: 22px;
       overflow: hidden;
@@ -62,6 +62,7 @@
         inset 0 0 0 1px rgba(255,255,255,0.06),
         0 18px 36px -16px rgba(0,0,0,0.55);
       transition: transform .18s ease, box-shadow .18s ease;
+      min-height: 380px;
     }
     .game-card:hover {
       transform: translateY(-3px);
@@ -71,19 +72,28 @@
         0 0 0 1px rgba(216, 82, 63, 0.30);
     }
     .game-card-image {
-      aspect-ratio: 1 / 1;
       background-size: cover;
       background-position: center;
       background-color: #0E1726;
+      grid-column: 1;
+      grid-row: 1;
     }
     .game-card-body {
-      padding: 40px 44px;
+      padding: 48px 52px;
       display: flex;
       flex-direction: column;
       justify-content: center;
       gap: 16px;
-      min-height: 320px;
       box-sizing: border-box;
+      grid-column: 2;
+      grid-row: 1;
+    }
+    /* Alternate: even cards put the image on the right. */
+    .game-card:nth-child(even) .game-card-image {
+      grid-column: 2;
+    }
+    .game-card:nth-child(even) .game-card-body {
+      grid-column: 1;
     }
     .game-card-name {
       font-size: 40px;
@@ -121,9 +131,18 @@
       .lobby-mark { font-size: 40px; letter-spacing: 3px; }
       .lobby-tag { font-size: 12px; letter-spacing: 2px; }
       .games-row { gap: 20px; }
-      .game-card { grid-template-columns: 1fr; }
-      .game-card-image { aspect-ratio: 16 / 10; }
-      .game-card-body { padding: 26px 22px 30px; min-height: 0; gap: 14px; }
+      .game-card { grid-template-columns: 1fr; min-height: 0; }
+      .game-card-image,
+      .game-card:nth-child(even) .game-card-image {
+        aspect-ratio: 16 / 10;
+        grid-column: 1; grid-row: 1;
+      }
+      .game-card-body,
+      .game-card:nth-child(even) .game-card-body {
+        padding: 26px 22px 30px;
+        gap: 14px;
+        grid-column: 1; grid-row: 2;
+      }
       .game-card-name { font-size: 30px; }
       .game-card-desc { font-size: 16px; }
     }
