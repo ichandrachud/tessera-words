@@ -42,6 +42,8 @@
   }
   const CFG = MODE === 'mobile' ? buildMobileCFG() : (() => {
     const W = 760, H = 600, HUD_H = 70;
+    document.body.style.setProperty('--canvas-w', W + 'px');
+    document.body.style.setProperty('--canvas-h', H + 'px');
     return {
       W, H, HUD_H,
       PLAY_X: 44,

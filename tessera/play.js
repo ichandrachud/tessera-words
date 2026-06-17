@@ -42,12 +42,17 @@
     document.body.style.setProperty('--canvas-h', vh + 'px');
     return { W: vw, H: vh, COLS: 6, ROWS: 13, CELL, HUD_H, BANNER_W: 320, BANNER_H };
   }
-  const CFG = MODE === 'mobile' ? buildMobileCFG() : {
-    W: 760, H: 570,
-    COLS: 12, ROWS: 8, CELL: 56,
-    HUD_H: 56,
-    BANNER_W: 0, BANNER_H: 0,
-  };
+  const CFG = MODE === 'mobile' ? buildMobileCFG() : (() => {
+    const desktopCFG = {
+      W: 760, H: 570,
+      COLS: 12, ROWS: 8, CELL: 56,
+      HUD_H: 56,
+      BANNER_W: 0, BANNER_H: 0,
+    };
+    document.body.style.setProperty('--canvas-w', desktopCFG.W + 'px');
+    document.body.style.setProperty('--canvas-h', desktopCFG.H + 'px');
+    return desktopCFG;
+  })();
 
   // Orientation change → reload so we recompute against the new viewport.
   // Plain resize is ignored (iOS chrome toggle shouldn't restart the game).
