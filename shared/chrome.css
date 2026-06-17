@@ -22,6 +22,29 @@
 .brand { display: flex; align-items: center; gap: 14px; }
 a.brand { text-decoration: none; color: inherit; }
 a.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+
+.header-left { display: flex; align-items: center; gap: 24px; }
+.back-link {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+  white-space: nowrap;
+}
+.back-link:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.30);
+  background: rgba(255, 255, 255, 0.04);
+}
+.back-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .brand-mark {
   font-size: 40px;
   font-weight: 800;
