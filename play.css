@@ -144,18 +144,20 @@ html, body {
   letter-spacing: 1.4px;
 }
 
-/* ---------- SPLASH ---------- */
+/* ---------- SPLASH ----------
+   Sits INSIDE .game-wrap (which is position: relative, overflow: hidden)
+   so it covers only the game card — the page header / footer stay visible. */
 .splash {
-  position: fixed;
+  position: absolute;
   inset: 0;
-  z-index: 9999;
+  z-index: 10;                                          /* above the canvas */
   background-color: var(--bg);                          /* navy fallback while image loads */
   background-image: url('./splash.jpg');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   transition: opacity 0.6s ease-out;
-  /* During the 2 s reveal, swallow any clicks so a player can't accidentally
+  /* During the 2 s reveal, swallow taps so a player can't accidentally
      drop tiles in the game underneath. */
   pointer-events: auto;
 }

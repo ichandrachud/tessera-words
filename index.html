@@ -12,10 +12,6 @@
   <link rel="stylesheet" href="./play.css?v=1" />
 </head>
 <body>
-  <!-- Splash overlay: visible for 2 s on load, then fades out. Hides itself
-       after the fade so it never blocks gameplay. -->
-  <div id="splash" class="splash" aria-hidden="true"></div>
-
   <button id="focus-toggle" class="focus-btn" type="button" aria-label="Toggle phone-view focus mode" aria-pressed="false">
     <!-- enter-focus icon: landscape phone outline -->
     <svg class="icon-enter" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -44,6 +40,9 @@
     <section class="play-row">
       <div class="game-wrap">
         <canvas id="game" width="760" height="570" aria-label="Word puzzle"></canvas>
+        <!-- Splash sits ABOVE the canvas, INSIDE the game card. Visible for 2 s
+             on load, then fades and removes itself. -->
+        <div id="splash" class="splash" aria-hidden="true"></div>
       </div>
       <aside class="sidebar">
         <div class="ad-slot ad-medrec" aria-label="Advertisement">
