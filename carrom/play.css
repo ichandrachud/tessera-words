@@ -1,0 +1,10 @@
+/* ============================================================
+   Carrom · game-specific styles only.
+   Page chrome, palette tokens, focus mode all come from
+   /shared/tokens.css + chrome.css. Canvas dimensions are
+   overridden inline by play.js because Carrom is square.
+   ============================================================ */
+
+/* Splash image — single 2048×2048 JPG used for both desktop and mobile,
+   since Carrom's canvas is square in either mode. */
+.splash { background-image: url('./carrom-splash.jpg'); }

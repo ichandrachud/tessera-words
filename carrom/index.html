@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <title>Carrom — A Zamborin Game</title>
+  <meta name="description" content="Flick the striker. Pocket your discs. A digital take on the South-Asian classic." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../shared/tokens.css" />
+  <link rel="stylesheet" href="../shared/chrome.css" />
+  <link rel="stylesheet" href="./play.css?v=1" />
+</head>
+<body>
+  <button id="focus-toggle" class="focus-btn" type="button" aria-label="Toggle phone-view focus mode" aria-pressed="false">
+    <svg class="icon-enter" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2" y="6" width="20" height="12" rx="2.5"/>
+      <circle cx="19" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+    </svg>
+    <svg class="icon-exit" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18"/>
+    </svg>
+  </button>
+
+  <header class="site-header">
+    <div class="brand">
+      <span class="brand-mark">CARROM</span>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="play-row">
+      <div class="game-wrap">
+        <canvas id="game" aria-label="Carrom board"></canvas>
+        <!-- Splash: shows for 2 s at load, then fades to reveal the menu. -->
+        <div id="splash" class="splash" aria-hidden="true"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>A Zamborin Game</span>
+  </footer>
+
+  <script src="./play.js?v=1"></script>
+  <script>
+    (() => {
+      const btn = document.getElementById('focus-toggle');
+      btn.addEventListener('click', () => {
+        const on = document.body.classList.toggle('focus-mode');
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.setAttribute('aria-label', on ? 'Exit phone-view focus mode' : 'Enter phone-view focus mode');
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
+      });
+    })();
+
+    // Splash: 2 s reveal, 0.6 s fade, remove from DOM at 2.7 s.
+    (() => {
+      const splash = document.getElementById('splash');
+      if (!splash) return;
+      setTimeout(() => splash.classList.add('fading'), 2000);
+      setTimeout(() => splash.remove(), 2700);
+    })();
+  </script>
+</body>
+</html>
