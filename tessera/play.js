@@ -275,8 +275,13 @@
     osc.connect(g); g.connect(audioCtx.destination);
     osc.start(t0); osc.stop(t0 + dur + 0.02);
   }
-  function sfxTile()  { tone(380, 0.08, 0.05,  'sine'); }
+  function sfxTile()  {
+    // Final rest — a low double-thunk so 'landed' feels distinct from 'stepped'.
+    tone(220, 0.10, 0.06, 'sine');
+    setTimeout(() => tone(165, 0.12, 0.05, 'sine'), 30);
+  }
   function sfxTick()  { tone(1600, 0.02, 0.025, 'square'); }
+  function sfxFall()  { tone(260, 0.03, 0.018, 'triangle'); }
   function sfxStart() { tone(523, 0.10, 0.05,  'triangle'); setTimeout(() => tone(784, 0.12, 0.05, 'triangle'), 80); }
   function sfxWord(len) {
     // 3-letter word → C5, each extra letter adds a semitone-ish brightness.
@@ -896,6 +901,7 @@
         lockTile();
       } else {
         active.row++;
+        sfxFall();
         const interval = fastDropActive ? FAST_DROP_MS : currentStepInterval();
         active.nextStepAt = now + interval;
       }
