@@ -4,6 +4,5 @@
    /shared/tokens.css + chrome.css.
    ============================================================ */
 
-/* Splash images deferred — until they're added the navy --bg fallback shows. */
-/* body.mode-desktop .splash { background-image: url('./splash-desktop.jpg'); } */
-/* body.mode-mobile  .splash { background-image: url('./splash-mobile.jpg'); } */
+body.mode-desktop .splash { background-image: url('./untangle-desktop.jpg'); }
+body.mode-mobile  .splash { background-image: url('./untangle-mobile.jpg'); }
