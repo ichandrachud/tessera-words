@@ -176,16 +176,25 @@
   // drawParallaxLayer — tile an image horizontally at the layer's scroll rate.
   // The image is scaled to canvas height; tiled across as many widths as the
   // viewport needs (usually 2-3 copies, sometimes more for narrow layers).
-  function drawParallaxLayer(img, factor) {
+  //
+  // `blend` lets star layers use 'screen' compositing so the dark halos baked
+  // into the SVG's radial gradients drop out against the sky underneath. The
+  // SVGs declare mix-blend-mode internally, but canvas rasterises them on a
+  // transparent buffer first — that blend never sees the sky. Doing it here
+  // at the compositor level is the correct fix.
+  function drawParallaxLayer(img, factor, blend) {
     if (!img) return;
     const layerScale = H / img.height;
     const layerW = img.width * layerScale;
     const offset = (player.worldX * factor) % layerW;
+    ctx.save();
+    if (blend) ctx.globalCompositeOperation = blend;
     let x = -offset;
     while (x < W) {
       ctx.drawImage(img, x, 0, layerW, H);
       x += layerW;
     }
+    ctx.restore();
   }
 
   function drawPlayer() {
@@ -227,8 +236,8 @@
   function render(now) {
     clearBg();
     drawParallaxLayer(assets.sky,         PARALLAX.sky);
-    drawParallaxLayer(assets.farStars,    PARALLAX.far);
-    drawParallaxLayer(assets.closerStars, PARALLAX.close);
+    drawParallaxLayer(assets.farStars,    PARALLAX.far,   'screen');
+    drawParallaxLayer(assets.closerStars, PARALLAX.close, 'screen');
     drawExhaustTrail(now);
     drawPlayer();
   }
