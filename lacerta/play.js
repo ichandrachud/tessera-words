@@ -286,21 +286,58 @@
       fireAt: now + 700 + Math.random() * 800,
     });
   }
-  function spawnExplosion(x, y, color) {
-    const N = 14;
+  // Explosions come in two flavours:
+  //   • big=true  — full ship death: bright flash, expanding shock ring,
+  //                 28 fast hot sparks, slow drifting smoke.
+  //   • big=false — non-lethal bullet hit: small spark burst only.
+  function spawnExplosion(x, y, big) {
+    const sparkColors = ['#FFE38A', '#FF9F33', '#FF5C2C', '#FFD23F', '#FFFFFF'];
+    const N = big ? 30 : 8;
     for (let i = 0; i < N; i++) {
       const ang = Math.random() * Math.PI * 2;
-      const sp  = 1.2 + Math.random() * 2.6;
+      const sp  = (big ? 2.6 : 1.2) + Math.random() * (big ? 4.2 : 2.0);
+      const ttl = (big ? 720 : 380) + Math.random() * (big ? 480 : 220);
       particles.push({
+        kind:  'spark',
         x, y,
         vx: Math.cos(ang) * sp,
         vy: Math.sin(ang) * sp,
-        life0: 520 + Math.random() * 220,
-        life:  520 + Math.random() * 220,
-        color,
+        life0: ttl, life: ttl,
+        r0: (big ? 4 : 2.5) + Math.random() * 3,
+        color: sparkColors[Math.floor(Math.random() * sparkColors.length)],
       });
     }
+    if (!big) return;
+
+    // Hot white flash — only the first 140ms; sells the initial pop.
+    particles.push({
+      kind: 'flash', x, y, vx: 0, vy: 0,
+      life0: 160, life: 160, r0: 64, color: '#FFFFFF',
+    });
+    // Expanding shock ring — grows over its lifetime, thins as it expands.
+    particles.push({
+      kind: 'ring', x, y, vx: 0, vy: 0,
+      life0: 540, life: 540, r0: 92, color: '#FFE38A',
+    });
+    // Slow smoke puffs — drift up and outward, fade over ~1.5s.
+    for (let i = 0; i < 7; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const sp  = 0.25 + Math.random() * 0.55;
+      particles.push({
+        kind: 'smoke',
+        x, y,
+        vx: Math.cos(ang) * sp,
+        vy: Math.sin(ang) * sp - 0.25,
+        life0: 1200 + Math.random() * 700,
+        life:  1200 + Math.random() * 700,
+        r0: 9 + Math.random() * 6,
+        color: 'rgba(80, 60, 55, 0.55)',
+      });
+    }
+    // Camera shake — small drama bump on big kills.
+    cameraShake = Math.max(cameraShake, 7);
   }
+  let cameraShake = 0;
 
   // ---------- UPDATE ----------
   function update(dt, now) {
@@ -396,10 +433,10 @@
           bullets.splice(i, 1);
           en.hp -= 1;
           if (en.hp <= 0) {
-            spawnExplosion(en.x, en.y, '#ff8c33');
+            spawnExplosion(en.x, en.y, true);   // ship death — big drama
             enemies.splice(j, 1);
           } else {
-            spawnExplosion(b.x, b.y, '#ffd278');  // tiny spark on hit
+            spawnExplosion(b.x, b.y, false);    // non-lethal hit spark
           }
           break;
         }
@@ -415,7 +452,7 @@
         if (dx * dx + dy * dy < PLAYER_HIT_R * PLAYER_HIT_R) {
           bullets.splice(i, 1);
           playerHP = Math.max(0, playerHP - 8);
-          spawnExplosion(b.x, b.y, '#ff5555');
+          spawnExplosion(b.x, b.y, false);     // small spark on hit
           playerInvulnUntil = now + 320;       // brief i-frames
           break;
         }
@@ -424,7 +461,7 @@
         const en = enemies[i];
         const dx = en.x - player.screenX, dy = en.y - player.y;
         if (dx * dx + dy * dy < (PLAYER_HIT_R + ENEMY_HIT_R) * (PLAYER_HIT_R + ENEMY_HIT_R) * 0.55) {
-          spawnExplosion(en.x, en.y, '#ff8c33');
+          spawnExplosion(en.x, en.y, true);    // ramming kill — big drama
           enemies.splice(i, 1);
           playerHP = Math.max(0, playerHP - 18);
           playerInvulnUntil = now + 500;
@@ -437,10 +474,15 @@
       const p = particles[i];
       p.x += p.vx * (dt / 16);
       p.y += p.vy * (dt / 16);
-      p.vx *= 0.96; p.vy *= 0.96;
+      // Smoke decelerates faster (heavier air); sparks coast longer.
+      const damp = p.kind === 'smoke' ? 0.94 : (p.kind === 'spark' ? 0.97 : 1);
+      p.vx *= damp; p.vy *= damp;
       p.life -= dt;
       if (p.life <= 0) particles.splice(i, 1);
     }
+    // Camera shake decay — exponential drop, ~85% retained per 16ms.
+    cameraShake *= Math.pow(0.85, dt / 16);
+    if (cameraShake < 0.05) cameraShake = 0;
   }
 
   // ---------- RENDER ----------
@@ -562,12 +604,42 @@
 
   function drawParticles() {
     for (const p of particles) {
-      const t = p.life / p.life0;
+      const t = Math.max(0, p.life / p.life0);   // 1 = fresh, 0 = dead
       ctx.save();
-      ctx.globalAlpha = Math.max(0, t);
-      ctx.fillStyle = p.color;
-      const r = 3 * t + 1;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+      if (p.kind === 'flash') {
+        // Bright disc that fades very quickly.
+        ctx.globalAlpha = Math.pow(t, 1.5);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r0 * (1.2 - 0.2 * t), 0, Math.PI * 2);
+        ctx.fill();
+      } else if (p.kind === 'ring') {
+        // Expanding stroked ring — outer shock front.
+        const r = p.r0 * (1 - t) + 6;
+        ctx.globalAlpha = t * 0.85;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 4 * t + 1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (p.kind === 'smoke') {
+        // Soft dark puff drifting and growing as it fades.
+        ctx.globalAlpha = t * 0.55;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r0 * (2.2 - 1.2 * t), 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Spark — bright glowing dot that fades and shrinks.
+        ctx.globalAlpha = Math.pow(t, 0.55);
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 10 * t;
+        ctx.fillStyle = p.color;
+        const r = (p.r0 || 3) * t + 0.8;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
     }
   }
@@ -601,6 +673,17 @@
 
   function render(now) {
     clearBg();
+    // Apply camera shake — small random offset for a few frames after a big
+    // explosion. Save/restore the whole scene block as a pair so the matrix
+    // stays balanced regardless of shake state.
+    const shaking = cameraShake > 0.05;
+    ctx.save();
+    if (shaking) {
+      const sx = (Math.random() - 0.5) * cameraShake * 2;
+      const sy = (Math.random() - 0.5) * cameraShake * 2;
+      ctx.translate(sx, sy);
+    }
+
     drawParallaxLayer(assets.sky,         PARALLAX.sky);
     drawParallaxLayer(assets.farStars,    PARALLAX.far,   'screen');
     drawPlanets();
@@ -615,6 +698,9 @@
     drawEnemies();
     drawBullets();
     drawParticles();
+
+    ctx.restore();
+    // HUD sits OUTSIDE the shake transform so the bars stay rock-steady.
     drawHUD();
   }
 
