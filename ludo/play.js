@@ -44,9 +44,7 @@
   boardImg.onload = () => { boardReady = true; };
   boardImg.src = './ludo-board.svg';
 
-  // ---------- BOARD DRAW REGION + SVG MAPPING ----------
-  // The board image is drawn at 86% of canvas height (top-aligned-ish) leaving
-  // a HUD strip at the bottom for dice, roll button, and turn indicator.
+  // ---------- LAYOUT ----------
   const BOARD_FRAC = 0.86;
   const BOARD_DRAW_W = Math.floor(S * BOARD_FRAC);
   const BOARD_DRAW_H = BOARD_DRAW_W;
@@ -70,9 +68,9 @@
     textMute:  '#8E9CB5',
     accent:    '#D8523F',
     dieFace:   '#FFFFFF',
-    dieDot:    '#0E1726',
+    dieFace2:  '#F1F3F8',
+    dieDot:    '#1a1f2e',
     dieDim:    '#9CA3AF',
-    diceFrame: '#1F2D4A',
   };
   const PLAYERS = {
     red:    { fill: '#ed1c24', glow: '#FF6B5C', name: 'Red'    },
@@ -80,8 +78,6 @@
     green:  { fill: '#39b54a', glow: '#8AECB7', name: 'Green'  },
     blue:   { fill: '#00aeef', glow: '#7DD8FF', name: 'Blue'   },
   };
-  // Turn order — anti-clockwise around the board so adjacent corners alternate.
-  const TURN_ORDER = ['green', 'yellow', 'blue', 'red'];
 
   // ---------- GEOMETRY ----------
   const PATH_LEN = 52;
@@ -115,37 +111,133 @@
     red:    [[130.87, 699.95], [269.56, 699.95], [130.87, 837.79], [269.56, 837.79]],
   };
 
+  // ---------- AUDIO ----------
+  // Lazy-init on first user gesture (browser autoplay policy).
+  let audioCtx = null;
+  let soundOn = localStorage.getItem('zamborin-ludo.sound') !== '0';
+  function ensureAudio() {
+    if (audioCtx) return;
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch (_) { audioCtx = null; }
+  }
+  function setSound(on) {
+    soundOn = on;
+    try { localStorage.setItem('zamborin-ludo.sound', on ? '1' : '0'); } catch (_) {}
+  }
+  function tone(freq, dur, gain, type) {
+    if (!soundOn || !audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type || 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.02);
+  }
+  function noiseBurst(dur, freq, q, gain) {
+    if (!soundOn || !audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const len = Math.max(1, Math.floor(audioCtx.sampleRate * dur));
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const env = 1 - (i / data.length);
+      data[i] = (Math.random() * 2 - 1) * env;
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = freq;
+    filter.Q.value = q;
+    const g = audioCtx.createGain();
+    g.gain.value = gain;
+    src.connect(filter); filter.connect(g); g.connect(audioCtx.destination);
+    src.start(t0);
+  }
+  function sfxDiceShake() {
+    // Rattling sequence — emulates two cubes clattering against each other.
+    noiseBurst(0.05, 3500, 2.5, 0.18);
+    setTimeout(() => noiseBurst(0.05, 2800, 2.5, 0.16),  90);
+    setTimeout(() => noiseBurst(0.05, 3800, 2.5, 0.14), 200);
+    setTimeout(() => noiseBurst(0.05, 3200, 2.5, 0.14), 320);
+    setTimeout(() => noiseBurst(0.05, 3600, 2.5, 0.12), 450);
+  }
+  function sfxDiceLand() {
+    noiseBurst(0.10, 800, 1.5, 0.25);
+    setTimeout(() => tone(210, 0.10, 0.10, 'sine'), 20);
+  }
+  function sfxMove()    { tone(440, 0.05, 0.045, 'sine'); }
+  function sfxUnlock()  { tone(660, 0.10, 0.06,  'triangle'); setTimeout(() => tone(880, 0.10, 0.06, 'triangle'), 70); }
+  function sfxFinish()  { tone(784, 0.12, 0.07, 'triangle'); setTimeout(() => tone(1047, 0.16, 0.07, 'triangle'), 90); }
+  function sfxCapture() {
+    noiseBurst(0.10, 240, 1.5, 0.3);
+    setTimeout(() => tone(180, 0.18, 0.10, 'square'), 30);
+  }
+  function sfxWin() {
+    tone(523, 0.13, 0.08, 'triangle');
+    setTimeout(() => tone(659, 0.13, 0.08, 'triangle'),  90);
+    setTimeout(() => tone(784, 0.13, 0.08, 'triangle'), 180);
+    setTimeout(() => tone(1047, 0.22, 0.10,'triangle'), 280);
+  }
+
+  // ---------- GAME CONFIG ----------
+  // The HUMAN always plays GREEN; the other 1, 2, or 3 colours are AI. Player
+  // count is chosen on the start menu. Going around the cross clockwise:
+  //   green (TL) → yellow (TR) → blue (BR) → red (BL)
+  // 2P uses diagonal opposites for fairness; 3P drops red.
+  const HUMAN = 'green';
+  const TURN_ORDER_BY_COUNT = {
+    2: ['green', 'blue'],
+    3: ['green', 'yellow', 'blue'],
+    4: ['green', 'yellow', 'blue', 'red'],
+  };
+  let playerCount = 4;
+  let turnOrder = TURN_ORDER_BY_COUNT[4];
+  let isAI = {};
+
+  function setPlayerCount(n) {
+    playerCount = n;
+    turnOrder = TURN_ORDER_BY_COUNT[n];
+    isAI = {};
+    for (const p of turnOrder) isAI[p] = (p !== HUMAN);
+  }
+
   // ---------- TOKEN STATE ----------
   function freshTokens() {
-    const tokens = [];
-    for (const player of TURN_ORDER) {
+    const arr = [];
+    for (const player of turnOrder) {
       for (let i = 0; i < 4; i++) {
-        tokens.push({ player, slotIdx: i, status: 'base', boardIdx: -1, homeIdx: -1 });
+        arr.push({ player, slotIdx: i, status: 'base', boardIdx: -1, homeIdx: -1 });
       }
     }
-    return tokens;
+    return arr;
   }
-  let tokens = freshTokens();
+  let tokens = [];
   function playerTokens(p) { return tokens.filter(t => t.player === p); }
   function allFinished(p)  { return playerTokens(p).every(t => t.status === 'finished'); }
 
   // ---------- GAME STATE ----------
-  let scene = 'rolling';                // 'rolling' | 'choosing' | 'gameOver'
-  let activePlayerIdx = 0;              // index into TURN_ORDER
+  let scene = 'menu';                   // 'menu' | 'rolling' | 'choosing' | 'gameOver'
+  let activePlayerIdx = 0;
   let dice = [null, null];
   let diceUsed = [false, false];
-  let selectedDie = -1;                 // -1 | 0 | 1
+  let selectedDie = -1;
   let consecutiveDoubles = 0;
-  let rollAnim = null;                  // tumbling animation state
+  let rollAnim = null;
   let winner = null;
-  let captureFlash = null;              // { svgX, svgY, t0 } — brief red ring at capture site
-  let lastMoveMsg = '';                 // small-print status under the dice
+  let captureFlash = null;
+  let lastMoveMsg = '';
+  let capturedThisRoll = false;
+  // AI scheduling — milliseconds-of-time when the next AI action fires.
+  let aiActionAt = 0;
 
-  function activePlayer() { return TURN_ORDER[activePlayerIdx]; }
+  function activePlayer() { return turnOrder[activePlayerIdx]; }
 
   // ---------- LEGAL MOVES ----------
-  // Given a token and a die value, return the destination it would land on (or
-  // null if illegal).  Destinations are tagged by where the token would end up.
   function previewMove(token, dieValue) {
     if (token.status === 'finished') return null;
     if (token.status === 'base') {
@@ -156,15 +248,9 @@
       const startIdx = START_INDEX[token.player];
       const boardSteps = (token.boardIdx - startIdx + PATH_LEN) % PATH_LEN;
       const total = boardSteps + dieValue;
-      if (total <= 50) {
-        return { kind: 'board', idx: (token.boardIdx + dieValue) % PATH_LEN };
-      }
-      if (total <= 55) {
-        return { kind: 'home', idx: total - 51 };
-      }
-      if (total === 56) {
-        return { kind: 'finished' };
-      }
+      if (total <= 50) return { kind: 'board', idx: (token.boardIdx + dieValue) % PATH_LEN };
+      if (total <= 55) return { kind: 'home', idx: total - 51 };
+      if (total === 56) return { kind: 'finished' };
       return null;
     }
     if (token.status === 'home') {
@@ -175,7 +261,6 @@
     }
     return null;
   }
-
   function hasAnyLegalMove(dieValue) {
     for (const t of playerTokens(activePlayer())) {
       if (previewMove(t, dieValue)) return true;
@@ -192,11 +277,12 @@
 
   // ---------- MOVE EXECUTION ----------
   function executeMove(token, dest) {
+    const wasBase = token.status === 'base';
     if (dest.kind === 'board') {
       token.status = 'board';
       token.boardIdx = dest.idx;
       token.homeIdx = -1;
-      // Capture: any opponent on this cell (and not a safe cell) goes home.
+      if (wasBase) sfxUnlock(); else sfxMove();
       if (!SAFE_INDICES.has(dest.idx)) {
         for (const other of tokens) {
           if (other !== token && other.player !== token.player &&
@@ -207,8 +293,7 @@
             const cell = PATH[dest.idx];
             captureFlash = { svgX: cell[0], svgY: cell[1], t0: performance.now() };
             lastMoveMsg = PLAYERS[activePlayer()].name + ' captured a ' + PLAYERS[other.player].name + ' piece!';
-            // Capturing grants an extra roll — handled at endTurn() via the
-            // capturedThisRoll flag below.
+            sfxCapture();
             capturedThisRoll = true;
           }
         }
@@ -217,20 +302,20 @@
       token.status = 'home';
       token.boardIdx = -1;
       token.homeIdx = dest.idx;
+      sfxMove();
     } else if (dest.kind === 'finished') {
       token.status = 'finished';
       token.boardIdx = -1;
       token.homeIdx = -1;
       lastMoveMsg = PLAYERS[token.player].name + ' got a piece home!';
+      sfxFinish();
     }
-    // Win check.
     if (allFinished(token.player)) {
       winner = token.player;
       scene = 'gameOver';
+      sfxWin();
     }
   }
-
-  let capturedThisRoll = false;
 
   // ---------- TURN FLOW ----------
   function startTurn() {
@@ -240,27 +325,25 @@
     selectedDie = -1;
     rollAnim = null;
     capturedThisRoll = false;
+    aiActionAt = 0;
   }
-
   function performRoll() {
     if (scene !== 'rolling' || winner) return;
-    // Begin tumbling animation. Real values land at the end.
+    ensureAudio();
     const v1 = 1 + Math.floor(Math.random() * 6);
     const v2 = 1 + Math.floor(Math.random() * 6);
-    rollAnim = { t0: performance.now(), duration: 650, finalA: v1, finalB: v2 };
+    rollAnim = { t0: performance.now(), duration: 720, finalA: v1, finalB: v2 };
     capturedThisRoll = false;
-    // While the animation runs we keep scene = 'rolling'; on completion we
-    // commit the values and transition to 'choosing'.
+    sfxDiceShake();
   }
-
   function commitRoll() {
     dice = [rollAnim.finalA, rollAnim.finalB];
     diceUsed = [false, false];
     selectedDie = -1;
     scene = 'choosing';
     rollAnim = null;
+    sfxDiceLand();
     autoSelectIfForced();
-    // If no legal moves at all, hand off after a brief pause.
     if (!diesUsableMap()[0] && !diesUsableMap()[1]) {
       lastMoveMsg = 'No legal moves — ' + PLAYERS[activePlayer()].name + ' passes.';
       setTimeout(endTurn, 900);
@@ -268,49 +351,82 @@
       lastMoveMsg = '';
     }
   }
-
   function autoSelectIfForced() {
     const usable = diesUsableMap();
     if (usable[0] && !usable[1]) selectedDie = 0;
     else if (!usable[0] && usable[1]) selectedDie = 1;
     else selectedDie = -1;
   }
-
   function endTurn() {
-    // 6 OR double OR capture grants an extra roll. Cap consecutive doubles at
-    // 3 to prevent a stuck-spinning state.
+    if (winner) return;
     const wasDouble = dice[0] != null && dice[0] === dice[1];
     const rolledSix = dice[0] === 6 || dice[1] === 6;
-    const extraRoll = !winner && (capturedThisRoll || wasDouble || rolledSix);
-
+    const extraRoll = capturedThisRoll || wasDouble || rolledSix;
     if (extraRoll) {
       if (wasDouble) consecutiveDoubles++; else consecutiveDoubles = 0;
       if (consecutiveDoubles >= 3) {
-        // Three doubles in a row → forfeit turn (classic Ludo penalty).
         consecutiveDoubles = 0;
         advancePlayer();
-      } else {
-        scene = 'rolling';
-        dice = [null, null];
-        diceUsed = [false, false];
-        selectedDie = -1;
-        capturedThisRoll = false;
         return;
       }
-    } else {
-      consecutiveDoubles = 0;
-      advancePlayer();
+      scene = 'rolling';
+      dice = [null, null];
+      diceUsed = [false, false];
+      selectedDie = -1;
+      capturedThisRoll = false;
+      aiActionAt = 0;
+      return;
     }
+    consecutiveDoubles = 0;
+    advancePlayer();
   }
-
   function advancePlayer() {
-    activePlayerIdx = (activePlayerIdx + 1) % TURN_ORDER.length;
+    activePlayerIdx = (activePlayerIdx + 1) % turnOrder.length;
     startTurn();
   }
 
+  // ---------- AI (placeholder — random legal moves) ----------
+  // Real personalities (Aggressive / Sprinter / Defender) come in Phase 4.
+  function aiTick(now) {
+    if (winner || scene === 'menu' || scene === 'gameOver') return;
+    if (!isAI[activePlayer()]) return;
+
+    if (scene === 'rolling' && !rollAnim) {
+      if (aiActionAt === 0) aiActionAt = now + 650;
+      else if (now >= aiActionAt) {
+        aiActionAt = 0;
+        performRoll();
+      }
+      return;
+    }
+    if (scene === 'choosing') {
+      if (aiActionAt === 0) aiActionAt = now + 600;
+      else if (now >= aiActionAt) {
+        aiActionAt = 0;
+        aiMakeOneMove();
+      }
+    }
+  }
+  function aiMakeOneMove() {
+    const moves = [];
+    for (let i = 0; i < 2; i++) {
+      if (diceUsed[i]) continue;
+      for (const t of playerTokens(activePlayer())) {
+        const dest = previewMove(t, dice[i]);
+        if (dest) moves.push({ token: t, dieIdx: i });
+      }
+    }
+    if (moves.length === 0) { endTurn(); return; }
+    const m = moves[Math.floor(Math.random() * moves.length)];
+    selectedDie = m.dieIdx;
+    handleTokenPick(m.token);
+  }
+
   // ---------- INPUT ----------
-  const ROLL_BTN = { x: 0, y: 0, w: 0, h: 0 };
+  const ROLL_BTN  = { x: 0, y: 0, w: 0, h: 0 };
   const DIE_RECTS = [{ x: 0, y: 0, w: 0, h: 0 }, { x: 0, y: 0, w: 0, h: 0 }];
+  const MENU_BTNS = [{ x: 0, y: 0, w: 0, h: 0, n: 2 }, { x: 0, y: 0, w: 0, h: 0, n: 3 }, { x: 0, y: 0, w: 0, h: 0, n: 4 }];
+  const SOUND_BTN = { x: 0, y: 0, w: 0, h: 0 };
 
   function logical(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
@@ -323,38 +439,48 @@
 
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    ensureAudio();
     const { lx, ly } = logical(e.clientX, e.clientY);
 
-    if (winner) {
-      // Tap anywhere on game-over screen → restart.
-      restartGame();
+    if (inRect(SOUND_BTN, lx, ly)) {
+      setSound(!soundOn);
+      if (soundOn) tone(660, 0.06, 0.04, 'sine');
       return;
     }
 
-    if (scene === 'rolling') {
-      if (!rollAnim && inRect(ROLL_BTN, lx, ly)) performRoll();
-      return;
-    }
-
-    if (scene === 'choosing') {
-      // Die selection
-      const usable = diesUsableMap();
-      for (let i = 0; i < 2; i++) {
-        if (inRect(DIE_RECTS[i], lx, ly) && usable[i]) {
-          selectedDie = i;
-          return;
-        }
+    if (scene === 'menu') {
+      for (const b of MENU_BTNS) {
+        if (inRect(b, lx, ly)) { startGame(b.n); return; }
       }
-      // Token selection — must be active player's, must have a legal move.
-      const hitToken = findTokenAt(lx, ly);
-      if (!hitToken || hitToken.player !== activePlayer()) return;
-      handleTokenPick(hitToken);
       return;
+    }
+    if (scene === 'gameOver') {
+      scene = 'menu';
+      return;
+    }
+
+    if (!isAI[activePlayer()]) {
+      if (scene === 'rolling') {
+        if (!rollAnim && inRect(ROLL_BTN, lx, ly)) performRoll();
+        return;
+      }
+      if (scene === 'choosing') {
+        const usable = diesUsableMap();
+        for (let i = 0; i < 2; i++) {
+          if (inRect(DIE_RECTS[i], lx, ly) && usable[i]) {
+            selectedDie = i;
+            return;
+          }
+        }
+        const hitToken = findTokenAt(lx, ly);
+        if (!hitToken || hitToken.player !== activePlayer()) return;
+        handleTokenPick(hitToken);
+      }
     }
   });
 
   function findTokenAt(lx, ly) {
-    const r = tokenR() * 1.05;
+    const r = tokenR() * 1.10;
     for (const t of tokens) {
       const anchor = tokenAnchor(t);
       const pos = svg(anchor.x, anchor.y);
@@ -365,10 +491,6 @@
   }
 
   function handleTokenPick(token) {
-    // Decide which die to use:
-    //   • If a die is already selected → use it (if legal for this token)
-    //   • Otherwise auto-pick: prefer a die that's the ONLY legal one for this
-    //     token; if both are legal, default to the larger value
     let dieIdx = selectedDie;
     if (dieIdx === -1) {
       const legal = [];
@@ -376,29 +498,19 @@
         if (!diceUsed[i] && previewMove(token, dice[i])) legal.push(i);
       }
       if (legal.length === 0) return;
-      if (legal.length === 1) {
-        dieIdx = legal[0];
-      } else {
-        dieIdx = dice[legal[0]] >= dice[legal[1]] ? legal[0] : legal[1];
-      }
+      if (legal.length === 1) dieIdx = legal[0];
+      else dieIdx = dice[legal[0]] >= dice[legal[1]] ? legal[0] : legal[1];
     } else {
       if (diceUsed[dieIdx]) return;
-      const ok = previewMove(token, dice[dieIdx]);
-      if (!ok) return;
+      if (!previewMove(token, dice[dieIdx])) return;
     }
     const dest = previewMove(token, dice[dieIdx]);
     if (!dest) return;
     executeMove(token, dest);
     diceUsed[dieIdx] = true;
     selectedDie = -1;
-
-    // After the move, either keep choosing (other die still has work) or end turn.
-    if (diceUsed[0] && diceUsed[1]) {
-      endTurn();
-      return;
-    }
+    if (diceUsed[0] && diceUsed[1]) { endTurn(); return; }
     autoSelectIfForced();
-    // If the remaining die has no legal moves, end turn.
     const usable = diesUsableMap();
     if (!usable[0] && !usable[1]) {
       lastMoveMsg = 'No move with remaining die — turn ends.';
@@ -406,12 +518,16 @@
     }
   }
 
-  function restartGame() {
+  // ---------- LIFECYCLE ----------
+  function startGame(n) {
+    setPlayerCount(n);
     tokens = freshTokens();
     activePlayerIdx = 0;
     winner = null;
     consecutiveDoubles = 0;
     lastMoveMsg = '';
+    captureFlash = null;
+    aiActionAt = 0;
     startTurn();
   }
 
@@ -431,7 +547,6 @@
     }
     return { x: CENTRE[0], y: CENTRE[1] };
   }
-
   function roundRect(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -443,19 +558,19 @@
   }
 
   function drawEmptyBaseWells() {
-    // When a token has left its base, its starting well is dimmed so it reads
-    // as "already in play." A semi-transparent overlay does the job without
-    // touching the SVG.
-    for (const player of TURN_ORDER) {
+    for (const player of Object.keys(BASE_SLOTS)) {
+      const inGame = turnOrder.indexOf(player) !== -1;
       for (let s = 0; s < 4; s++) {
-        const occupied = tokens.some(t =>
+        const occupied = inGame && tokens.some(t =>
           t.player === player && t.slotIdx === s && t.status === 'base'
         );
         if (occupied) continue;
         const slot = BASE_SLOTS[player][s];
         const pos = svg(slot[0], slot[1]);
         ctx.save();
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+        // Dim wells for empty slots; further darken slots of inactive players
+        // (so the player count is unambiguous on the board).
+        ctx.fillStyle = inGame ? 'rgba(0, 0, 0, 0.30)' : 'rgba(0, 0, 0, 0.55)';
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, tokenR() * 0.95, 0, Math.PI * 2);
         ctx.fill();
@@ -465,11 +580,9 @@
   }
 
   function drawTokens(now) {
-    // Highlight tokens that can move with the current dice.
     const movableSet = new Set();
-    if (scene === 'choosing' && !winner) {
-      const player = activePlayer();
-      for (const t of playerTokens(player)) {
+    if (scene === 'choosing' && !winner && !isAI[activePlayer()]) {
+      for (const t of playerTokens(activePlayer())) {
         for (let i = 0; i < 2; i++) {
           if (!diceUsed[i] && previewMove(t, dice[i])) { movableSet.add(t); break; }
         }
@@ -477,8 +590,6 @@
     }
     const pulse = 0.6 + 0.4 * Math.sin(now / 320);
 
-    // Group tokens that share a board cell so we can render them as a small
-    // stack (offsetting overlapping tokens slightly).
     const groups = new Map();
     for (const t of tokens) {
       const a = tokenAnchor(t);
@@ -490,7 +601,6 @@
       stack.forEach((t, i) => {
         const a = tokenAnchor(t);
         const pos = svg(a.x, a.y);
-        // Small symmetric offset for stacked tokens at the same cell.
         let dx = 0, dy = 0;
         if (stack.length > 1) {
           const ang = (i / stack.length) * Math.PI * 2;
@@ -548,32 +658,50 @@
 
   // ---------- DICE ----------
   function drawDie(x, y, size, value, opts) {
-    const r = size * 0.16;
     const dim = opts && opts.dim;
     const selected = opts && opts.selected;
     const usable = opts && opts.usable;
 
+    // Outer drop shadow for tactile depth.
     ctx.save();
-    // Body
-    ctx.fillStyle = dim ? '#E5E7EB' : C.dieFace;
-    ctx.shadowColor = selected ? '#FFFFFF' : 'rgba(0,0,0,0.40)';
-    ctx.shadowBlur  = selected ? 16 : 6;
-    ctx.shadowOffsetY = selected ? 0 : 3;
+    if (!dim) {
+      ctx.shadowColor = selected ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.45)';
+      ctx.shadowBlur  = selected ? 14 : 8;
+      ctx.shadowOffsetY = selected ? 0 : 3;
+    }
+    // Gradient face — subtle top-to-bottom highlight for a "real cube" look.
+    const grad = ctx.createLinearGradient(x, y, x, y + size);
+    if (dim) {
+      grad.addColorStop(0, '#D9DDE6');
+      grad.addColorStop(1, '#BFC4D0');
+    } else {
+      grad.addColorStop(0, '#FFFFFF');
+      grad.addColorStop(1, C.dieFace2);
+    }
+    ctx.fillStyle = grad;
     roundRect(x, y, size, size, size * 0.18);
     ctx.fill();
     ctx.restore();
 
-    // Border
-    ctx.strokeStyle = selected ? '#FFFFFF' : (usable ? 'rgba(0,0,0,0.50)' : 'rgba(0,0,0,0.25)');
+    // Subtle inner border for crispness.
+    ctx.strokeStyle = selected ? '#FFFFFF' : (usable ? 'rgba(0,0,0,0.30)' : 'rgba(0,0,0,0.18)');
     ctx.lineWidth = selected ? 3 : 1.5;
     roundRect(x, y, size, size, size * 0.18);
     ctx.stroke();
 
-    // Dots
-    const dotColor = dim ? C.dieDim : C.dieDot;
-    ctx.fillStyle = dotColor;
+    // Inner highlight stroke for glassy edge.
+    if (!dim) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1;
+      roundRect(x + 2, y + 2, size - 4, size - 4, size * 0.16);
+      ctx.stroke();
+    }
+
+    // Dots — smaller (0.108 of side) and spread further apart (0.30) so the
+    // six-face never has dots touching each other.
+    const dotR = size * 0.108;
+    const off  = size * 0.30;
     const cx = x + size / 2, cy = y + size / 2;
-    const off = size * 0.26;
     const pat = {
       1: [[0, 0]],
       2: [[-off, -off], [off, off]],
@@ -583,10 +711,17 @@
       6: [[-off, -off], [off, -off], [-off, 0], [off, 0], [-off, off], [off, off]],
     };
     const dots = pat[value] || [];
+    ctx.fillStyle = dim ? C.dieDim : C.dieDot;
     for (const [dx, dy] of dots) {
+      // Each dot gets a tiny shadow for inset-pip look.
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.20)';
+      ctx.shadowBlur = 1.5;
+      ctx.shadowOffsetY = 0.6;
       ctx.beginPath();
-      ctx.arc(cx + dx, cy + dy, r, 0, Math.PI * 2);
+      ctx.arc(cx + dx, cy + dy, dotR, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -611,8 +746,6 @@
   }
 
   function drawDiceHUD(now) {
-    // Dice are always rendered to the LEFT of (or in place of) the roll button,
-    // so the player sees them throughout the turn.
     const dieSize = Math.min(56, HUD_H * 0.62);
     const gap = 14;
     const totalW = dieSize * 2 + gap;
@@ -622,23 +755,21 @@
     let v1 = dice[0];
     let v2 = dice[1];
     if (rollAnim) {
-      // Tumble — show changing values during the animation, settle on the last frame.
       const dt = now - rollAnim.t0;
       const settled = dt >= rollAnim.duration;
-      v1 = settled ? rollAnim.finalA : 1 + Math.floor(((now / 60) | 0) % 6);
-      v2 = settled ? rollAnim.finalB : 1 + Math.floor(((now / 70 + 3) | 0) % 6);
+      v1 = settled ? rollAnim.finalA : 1 + Math.floor(((now / 55) | 0) % 6);
+      v2 = settled ? rollAnim.finalB : 1 + Math.floor(((now / 65 + 3) | 0) % 6);
       if (settled) commitRoll();
     }
 
     const usable = diesUsableMap();
+    const humanTurn = !isAI[activePlayer()];
 
-    if (scene === 'rolling' && !rollAnim) {
-      // Show roll button in the centre, hide the dice for now.
+    if (scene === 'rolling' && !rollAnim && humanTurn) {
       drawRollButton(true);
       return;
     }
 
-    // Draw dice
     for (let i = 0; i < 2; i++) {
       const x = baseX + i * (dieSize + gap);
       const y = baseY;
@@ -647,8 +778,8 @@
       const isUsed = diceUsed[i];
       drawDie(x, y, dieSize, val || 1, {
         dim: isUsed,
-        selected: !isUsed && selectedDie === i,
-        usable: !isUsed && usable[i],
+        selected: humanTurn && !isUsed && selectedDie === i,
+        usable: humanTurn && !isUsed && usable[i],
       });
     }
   }
@@ -656,12 +787,12 @@
   function drawTurnIndicator() {
     const player = activePlayer();
     const color = PLAYERS[player].fill;
-    // Coloured pill at top-left of HUD strip.
     ctx.font = '800 14px Inter, sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    const label = winner ? PLAYERS[winner].name + ' WINS' : PLAYERS[player].name.toUpperCase() + ' TO MOVE';
-    const padX = 14, padY = 8;
+    const aiTag = isAI[player] ? ' (AI)' : '';
+    const label = winner ? PLAYERS[winner].name.toUpperCase() + ' WINS' : PLAYERS[player].name.toUpperCase() + aiTag + ' TO MOVE';
+    const padX = 14;
     const w = ctx.measureText(label).width + padX * 2;
     const h = 32;
     const x = 16;
@@ -671,8 +802,8 @@
     roundRect(x, y, w, h, h / 2);
     ctx.fill();
     ctx.restore();
-    // Text — pick contrasting color (dark on yellow, white on others).
-    ctx.fillStyle = (winner ? winner : player) === 'yellow' ? '#1a1a1a' : '#FFFFFF';
+    const labelPlayer = winner ? winner : player;
+    ctx.fillStyle = labelPlayer === 'yellow' ? '#1a1a1a' : '#FFFFFF';
     ctx.fillText(label, x + padX, y + h / 2 + 1);
   }
 
@@ -683,6 +814,46 @@
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     ctx.fillText(lastMoveMsg, S - 16, HUD_Y + HUD_H / 2);
+  }
+
+  function drawSoundButton() {
+    const size = 22;
+    const padding = 10;
+    // Top-LEFT of canvas, well clear of the fullscreen close × at top-right.
+    const bx = padding;
+    const by = padding;
+    SOUND_BTN.x = bx; SOUND_BTN.y = by; SOUND_BTN.w = size; SOUND_BTN.h = size;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    roundRect(bx, by, size, size, 5);
+    ctx.fill();
+    const cx = bx + size / 2;
+    const cy = by + size / 2;
+    ctx.fillStyle = soundOn ? C.text : C.textMute;
+    ctx.strokeStyle = soundOn ? C.text : C.textMute;
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, cy - 3);
+    ctx.lineTo(cx - 3, cy - 3);
+    ctx.lineTo(cx + 1, cy - 5);
+    ctx.lineTo(cx + 1, cy + 5);
+    ctx.lineTo(cx - 3, cy + 3);
+    ctx.lineTo(cx - 6, cy + 3);
+    ctx.closePath();
+    ctx.fill();
+    if (soundOn) {
+      ctx.beginPath(); ctx.arc(cx + 3, cy, 2.5, -Math.PI / 3, Math.PI / 3); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx + 3, cy, 5,   -Math.PI / 3, Math.PI / 3); ctx.stroke();
+    } else {
+      ctx.strokeStyle = C.accent;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(bx + 4, by + size - 4);
+      ctx.lineTo(bx + size - 4, by + 4);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function drawWinnerOverlay() {
@@ -699,13 +870,80 @@
     ctx.fillText(PLAYERS[winner].name.toUpperCase() + ' WINS', cx, cy - 24);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '600 16px Inter, sans-serif';
-    ctx.fillText('Tap anywhere to play again', cx, cy + 28);
+    ctx.fillText('Tap anywhere to return to menu', cx, cy + 28);
+  }
+
+  // ---------- MENU ----------
+  function drawMenu(now) {
+    // Dim the canvas slightly so the menu pops.
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, S, S);
+    if (boardReady) {
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      ctx.drawImage(boardImg, BOARD_X, BOARD_Y, BOARD_DRAW_W, BOARD_DRAW_H);
+      ctx.restore();
+    }
+    // Title
+    const cx = S / 2;
+    const yTitle = S * 0.30;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '900 36px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('LUDO', cx, yTitle - 18);
+    ctx.fillStyle = C.textDim;
+    ctx.font = '500 16px Inter, sans-serif';
+    ctx.fillText('You play Green. Choose how many players today.', cx, yTitle + 18);
+
+    // Three big square buttons in a row.
+    const btnSize = Math.min(140, S * 0.20);
+    const btnGap = 22;
+    const totalW = btnSize * 3 + btnGap * 2;
+    const startX = cx - totalW / 2;
+    const btnY = S * 0.46;
+    const pulse = 0.85 + 0.15 * Math.sin(now / 380);
+    for (let i = 0; i < 3; i++) {
+      const n = 2 + i;
+      const x = startX + i * (btnSize + btnGap);
+      MENU_BTNS[i].x = x; MENU_BTNS[i].y = btnY; MENU_BTNS[i].w = btnSize; MENU_BTNS[i].h = btnSize; MENU_BTNS[i].n = n;
+      ctx.save();
+      ctx.shadowColor = '#FF6B5C';
+      ctx.shadowBlur = 16 * pulse;
+      ctx.fillStyle = C.accent;
+      roundRect(x, btnY, btnSize, btnSize, 20);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 64px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(n), x + btnSize / 2, btnY + btnSize / 2 - 8);
+      ctx.font = '700 11px Inter, sans-serif';
+      ctx.fillText('PLAYERS', x + btnSize / 2, btnY + btnSize / 2 + 30);
+    }
+
+    // Small previewing labels under the buttons telling which colours play.
+    const labels = ['You + 1 AI', 'You + 2 AIs', 'You + 3 AIs'];
+    ctx.fillStyle = C.textMute;
+    ctx.font = '600 12px Inter, sans-serif';
+    for (let i = 0; i < 3; i++) {
+      const x = startX + i * (btnSize + btnGap) + btnSize / 2;
+      ctx.fillText(labels[i], x, btnY + btnSize + 22);
+    }
   }
 
   // ---------- LOOP ----------
   function loop(now) {
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, S, S);
+
+    if (scene === 'menu') {
+      drawMenu(now);
+      drawSoundButton();
+      requestAnimationFrame(loop);
+      return;
+    }
 
     if (boardReady) {
       ctx.drawImage(boardImg, BOARD_X, BOARD_Y, BOARD_DRAW_W, BOARD_DRAW_H);
@@ -716,12 +954,12 @@
     drawTurnIndicator();
     drawDiceHUD(now);
     drawStatusLine();
+    drawSoundButton();
     if (winner) drawWinnerOverlay();
+
+    aiTick(now);
 
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
-
-  // ---------- INIT ----------
-  startTurn();
 })();
