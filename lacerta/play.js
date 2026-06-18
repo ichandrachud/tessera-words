@@ -105,7 +105,7 @@
   // Pitch is its vertical velocity input (−1 up, +1 down, with momentum).
   // Throttle controls world scroll speed.
   const player = {
-    screenX:    W * 0.22,      // anchored on the left third of the screen
+    screenX:    W * 0.12,      // anchored close to the left edge — maximum room for enemies coming in from the right
     y:          H / 2,
     vy:         0,
     pitch:      0,              // visual bank angle (−1..+1)
