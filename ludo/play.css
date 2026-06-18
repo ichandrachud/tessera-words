@@ -1,6 +1,8 @@
 /* ============================================================
    Ludo · game-specific styles only.
-   Page chrome, palette tokens, focus mode all come from
-   /shared/tokens.css + chrome.css. Canvas is square so its
-   --canvas-w / --canvas-h are set unconditionally by play.js.
+   Page chrome, palette tokens, splash mechanics, focus mode all
+   come from /shared/tokens.css + chrome.css. Canvas is square so
+   its --canvas-w / --canvas-h are set unconditionally by play.js.
    ============================================================ */
+
+.splash { background-image: url('./ludo-splash.jpg'); }

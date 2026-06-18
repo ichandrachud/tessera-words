@@ -158,19 +158,54 @@
     src.connect(filter); filter.connect(g); g.connect(audioCtx.destination);
     src.start(t0);
   }
+  // Wooden clack — damped low-frequency sine + a 5ms low-passed noise attack.
+  // Combined, this reads as "wood on wood" rather than "ceramic on ceramic"
+  // because the body is a soft sine pulse rather than band-passed noise.
+  function woodClack(freq, dur, gain) {
+    if (!soundOn || !audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    // Body: damped sine.
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, t0);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(gain, t0 + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g); g.connect(audioCtx.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.02);
+    // Tiny low-passed noise burst as the percussive attack — barely audible
+    // on its own, but adds a wooden "tk" to the front of the sine pulse.
+    const len = Math.max(1, Math.floor(audioCtx.sampleRate * 0.005));
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const filt = audioCtx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = freq * 4;
+    const ng = audioCtx.createGain();
+    ng.gain.value = gain * 0.30;
+    src.connect(filt); filt.connect(ng); ng.connect(audioCtx.destination);
+    src.start(t0);
+  }
   function sfxDiceShake() {
-    // Rattling sequence — emulates two cubes clattering against each other.
-    // Gains softened ~60% from first pass; lower Q makes the noise less
-    // resonant so it sits beneath the visual rather than over it.
-    noiseBurst(0.035, 3500, 1.5, 0.07);
-    setTimeout(() => noiseBurst(0.035, 2800, 1.5, 0.06),  90);
-    setTimeout(() => noiseBurst(0.035, 3800, 1.5, 0.05), 200);
-    setTimeout(() => noiseBurst(0.035, 3200, 1.5, 0.05), 320);
-    setTimeout(() => noiseBurst(0.035, 3600, 1.5, 0.04), 450);
+    // Five wooden clacks at slightly random pitches across the 720ms tumble.
+    // Lower frequencies + sine body = hollow "rolling in a box" character.
+    woodClack(220, 0.10, 0.07);
+    setTimeout(() => woodClack(180, 0.10, 0.055), 100);
+    setTimeout(() => woodClack(240, 0.10, 0.06),  220);
+    setTimeout(() => woodClack(195, 0.10, 0.050), 340);
+    setTimeout(() => woodClack(215, 0.10, 0.045), 470);
   }
   function sfxDiceLand() {
-    noiseBurst(0.08, 700, 1.0, 0.10);
-    setTimeout(() => tone(210, 0.08, 0.045, 'sine'), 20);
+    // Two solid wooden thunks for the final settle — like the cubes coming
+    // to rest against each other and then the box floor.
+    woodClack(150, 0.22, 0.11);
+    setTimeout(() => woodClack(115, 0.28, 0.08), 60);
   }
   function sfxMove()    { tone(440, 0.05, 0.045, 'sine'); }
   function sfxUnlock()  { tone(660, 0.10, 0.06,  'triangle'); setTimeout(() => tone(880, 0.10, 0.06, 'triangle'), 70); }
