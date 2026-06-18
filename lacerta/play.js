@@ -141,8 +141,9 @@
       img,
       x: W + 200,
       y: yMin + Math.random() * (yMax - yMin),
-      targetH: 100 + Math.random() * 180,           // 100..280 tall
-      depthSpeed: 0.30 + Math.random() * 0.35,      // 0.30..0.65x world rate
+      targetH: 70 + Math.random() * 110,            // 70..180 tall (smaller = deeper)
+      depthSpeed: 0.18 + Math.random() * 0.22,      // 0.18..0.40x world rate (slower)
+      alpha: 0.45 + Math.random() * 0.20,           // 0.45..0.65 (atmospheric fade)
       spawnedWorldX: player.worldX,
     });
   }
@@ -164,7 +165,10 @@
     for (const p of planets) {
       const aspect = p.img.width / p.img.height;
       const w = p.targetH * aspect;
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
       ctx.drawImage(p.img, p.x - w / 2, p.y - p.targetH / 2, w, p.targetH);
+      ctx.restore();
     }
   }
 
