@@ -195,19 +195,22 @@
   function sfxDiceShake() {
     // Five wooden clacks at slightly random pitches across the 720ms tumble.
     // Lower frequencies + sine body = hollow "rolling in a box" character.
-    woodClack(220, 0.10, 0.07);
-    setTimeout(() => woodClack(180, 0.10, 0.055), 100);
-    setTimeout(() => woodClack(240, 0.10, 0.06),  220);
-    setTimeout(() => woodClack(195, 0.10, 0.050), 340);
-    setTimeout(() => woodClack(215, 0.10, 0.045), 470);
+    // Gains bumped ~55% from the previous pass — still hollow, but present.
+    woodClack(220, 0.10, 0.11);
+    setTimeout(() => woodClack(180, 0.10, 0.085), 100);
+    setTimeout(() => woodClack(240, 0.10, 0.09),  220);
+    setTimeout(() => woodClack(195, 0.10, 0.08),  340);
+    setTimeout(() => woodClack(215, 0.10, 0.07),  470);
   }
   function sfxDiceLand() {
     // Two solid wooden thunks for the final settle — like the cubes coming
     // to rest against each other and then the box floor.
-    woodClack(150, 0.22, 0.11);
-    setTimeout(() => woodClack(115, 0.28, 0.08), 60);
+    woodClack(150, 0.22, 0.17);
+    setTimeout(() => woodClack(115, 0.28, 0.12), 60);
   }
-  function sfxMove()    { tone(440, 0.05, 0.045, 'sine'); }
+  // Soft flat per-square move sound — barely-there low sine pulse, very short,
+  // so a six-step move sounds like a soft "tk · tk · tk · tk · tk · tk".
+  function sfxStep()    { tone(280, 0.04, 0.025, 'sine'); }
   function sfxUnlock()  { tone(660, 0.10, 0.06,  'triangle'); setTimeout(() => tone(880, 0.10, 0.06, 'triangle'), 70); }
   function sfxFinish()  { tone(784, 0.12, 0.07, 'triangle'); setTimeout(() => tone(1047, 0.16, 0.07, 'triangle'), 90); }
   function sfxCapture() {
@@ -272,6 +275,9 @@
   let capturedThisRoll = false;
   // AI scheduling — milliseconds-of-time when the next AI action fires.
   let aiActionAt = 0;
+  // Move animation — when set, the engine is in the middle of sliding a token
+  // through its waypoints. Input is blocked, dice/turn flow paused.
+  let animation = null;
 
   function activePlayer() { return turnOrder[activePlayerIdx]; }
 
@@ -314,13 +320,118 @@
   }
 
   // ---------- MOVE EXECUTION ----------
-  function executeMove(token, dest) {
-    const wasBase = token.status === 'base';
+  // computePath builds the sequence of SVG-coord waypoints the token visits as
+  // it travels its dieValue steps. The animator slides through them in order;
+  // arrival at each waypoint triggers a soft step sound.
+  function computePath(token, dieValue) {
+    const wps = [];
+    if (token.status === 'base') {
+      const slot = BASE_SLOTS[token.player][token.slotIdx];
+      const startCell = PATH[START_INDEX[token.player]];
+      wps.push({ x: slot[0],     y: slot[1] });
+      wps.push({ x: startCell[0], y: startCell[1] });
+      return wps;
+    }
+    if (token.status === 'board') {
+      const startIdx = START_INDEX[token.player];
+      let curBoardIdx = token.boardIdx;
+      let inHome = false;
+      let curHomeIdx = -1;
+      wps.push({ x: PATH[curBoardIdx][0], y: PATH[curBoardIdx][1] });
+      for (let s = 1; s <= dieValue; s++) {
+        if (!inHome) {
+          const boardSteps = (curBoardIdx - startIdx + PATH_LEN) % PATH_LEN;
+          if (boardSteps + 1 <= 50) {
+            curBoardIdx = (curBoardIdx + 1) % PATH_LEN;
+            wps.push({ x: PATH[curBoardIdx][0], y: PATH[curBoardIdx][1] });
+          } else if (boardSteps + 1 === 51) {
+            inHome = true;
+            curHomeIdx = 0;
+            const hc = HOME_COL[token.player][0];
+            wps.push({ x: hc[0], y: hc[1] });
+          }
+        } else {
+          if (curHomeIdx + 1 < 5) {
+            curHomeIdx++;
+            const hc = HOME_COL[token.player][curHomeIdx];
+            wps.push({ x: hc[0], y: hc[1] });
+          } else if (curHomeIdx + 1 === 5) {
+            wps.push({ x: CENTRE[0], y: CENTRE[1] });
+          }
+        }
+      }
+      return wps;
+    }
+    if (token.status === 'home') {
+      let curHomeIdx = token.homeIdx;
+      const startHC = HOME_COL[token.player][curHomeIdx];
+      wps.push({ x: startHC[0], y: startHC[1] });
+      for (let s = 1; s <= dieValue; s++) {
+        if (curHomeIdx + 1 < 5) {
+          curHomeIdx++;
+          const hc = HOME_COL[token.player][curHomeIdx];
+          wps.push({ x: hc[0], y: hc[1] });
+        } else if (curHomeIdx + 1 === 5) {
+          wps.push({ x: CENTRE[0], y: CENTRE[1] });
+        }
+      }
+      return wps;
+    }
+    return wps;
+  }
+
+  function startMoveAnimation(token, dest, dieValue, onComplete) {
+    const waypoints = computePath(token, dieValue);
+    if (waypoints.length < 2) { onComplete(); return; }
+    // Unlock chime fires once at the start, in addition to the step sounds.
+    if (token.status === 'base') sfxUnlock();
+    animation = {
+      token,
+      waypoints,
+      startTime: performance.now(),
+      stepDuration: 130,  // ms per square — fast enough to feel snappy
+      lastStepPlayed: 0,
+      onComplete,
+    };
+  }
+
+  function tickAnimation(now) {
+    if (!animation) return;
+    const elapsed = now - animation.startTime;
+    const stepDur = animation.stepDuration;
+    const totalSteps = animation.waypoints.length - 1;
+    const reachedStep = Math.min(totalSteps, Math.floor(elapsed / stepDur));
+    while (animation.lastStepPlayed < reachedStep) {
+      animation.lastStepPlayed++;
+      sfxStep();
+    }
+    if (animation.lastStepPlayed >= totalSteps) {
+      const cb = animation.onComplete;
+      animation = null;
+      cb();
+    }
+  }
+
+  function animationPos() {
+    if (!animation) return null;
+    const elapsed = performance.now() - animation.startTime;
+    const stepDur = animation.stepDuration;
+    const totalSteps = animation.waypoints.length - 1;
+    const fractional = Math.min(totalSteps, elapsed / stepDur);
+    const idx = Math.min(totalSteps - 1, Math.floor(fractional));
+    const frac = Math.max(0, Math.min(1, fractional - idx));
+    const from = animation.waypoints[idx];
+    const to   = animation.waypoints[Math.min(totalSteps, idx + 1)];
+    return { x: from.x + (to.x - from.x) * frac, y: from.y + (to.y - from.y) * frac, frac };
+  }
+
+  // finalizeMove applies the actual game-state mutations (status change,
+  // capture, win check) once the animation has visually delivered the token.
+  function finalizeMove(token, dest) {
     if (dest.kind === 'board') {
       token.status = 'board';
       token.boardIdx = dest.idx;
       token.homeIdx = -1;
-      if (wasBase) sfxUnlock(); else sfxMove();
       if (!SAFE_INDICES.has(dest.idx)) {
         for (const other of tokens) {
           if (other !== token && other.player !== token.player &&
@@ -340,7 +451,6 @@
       token.status = 'home';
       token.boardIdx = -1;
       token.homeIdx = dest.idx;
-      sfxMove();
     } else if (dest.kind === 'finished') {
       token.status = 'finished';
       token.boardIdx = -1;
@@ -427,6 +537,7 @@
   // Real personalities (Aggressive / Sprinter / Defender) come in Phase 4.
   function aiTick(now) {
     if (winner || scene === 'menu' || scene === 'gameOver') return;
+    if (animation) return;
     if (!isAI[activePlayer()]) return;
 
     if (scene === 'rolling' && !rollAnim) {
@@ -480,6 +591,7 @@
     ensureAudio();
     const { lx, ly } = logical(e.clientX, e.clientY);
 
+    // Sound toggle is live in every scene — even mid-animation.
     if (inRect(SOUND_BTN, lx, ly)) {
       setSound(!soundOn);
       if (soundOn) tone(660, 0.06, 0.04, 'sine');
@@ -496,6 +608,9 @@
       scene = 'menu';
       return;
     }
+
+    // Block board / dice input while a piece is animating between squares.
+    if (animation) return;
 
     if (!isAI[activePlayer()]) {
       if (scene === 'rolling') {
@@ -542,18 +657,22 @@
       if (diceUsed[dieIdx]) return;
       if (!previewMove(token, dice[dieIdx])) return;
     }
-    const dest = previewMove(token, dice[dieIdx]);
+    const dieValue = dice[dieIdx];
+    const dest = previewMove(token, dieValue);
     if (!dest) return;
-    executeMove(token, dest);
     diceUsed[dieIdx] = true;
     selectedDie = -1;
-    if (diceUsed[0] && diceUsed[1]) { endTurn(); return; }
-    autoSelectIfForced();
-    const usable = diesUsableMap();
-    if (!usable[0] && !usable[1]) {
-      lastMoveMsg = 'No move with remaining die — turn ends.';
-      setTimeout(endTurn, 700);
-    }
+    startMoveAnimation(token, dest, dieValue, () => {
+      finalizeMove(token, dest);
+      if (winner) return;
+      if (diceUsed[0] && diceUsed[1]) { endTurn(); return; }
+      autoSelectIfForced();
+      const usable = diesUsableMap();
+      if (!usable[0] && !usable[1]) {
+        lastMoveMsg = 'No move with remaining die — turn ends.';
+        setTimeout(endTurn, 700);
+      }
+    });
   }
 
   // ---------- LIFECYCLE ----------
@@ -596,11 +715,14 @@
   }
 
   function drawEmptyBaseWells() {
+    const animatingToken = animation ? animation.token : null;
     for (const player of Object.keys(BASE_SLOTS)) {
       const inGame = turnOrder.indexOf(player) !== -1;
       for (let s = 0; s < 4; s++) {
+        // Treat the animating token's slot as empty even though its .status
+        // is still 'base' — visually the piece has already left the well.
         const occupied = inGame && tokens.some(t =>
-          t.player === player && t.slotIdx === s && t.status === 'base'
+          t.player === player && t.slotIdx === s && t.status === 'base' && t !== animatingToken
         );
         if (occupied) continue;
         const slot = BASE_SLOTS[player][s];
@@ -618,8 +740,9 @@
   }
 
   function drawTokens(now) {
+    const animatingToken = animation ? animation.token : null;
     const movableSet = new Set();
-    if (scene === 'choosing' && !winner && !isAI[activePlayer()]) {
+    if (scene === 'choosing' && !winner && !isAI[activePlayer()] && !animation) {
       for (const t of playerTokens(activePlayer())) {
         for (let i = 0; i < 2; i++) {
           if (!diceUsed[i] && previewMove(t, dice[i])) { movableSet.add(t); break; }
@@ -628,8 +751,11 @@
     }
     const pulse = 0.6 + 0.4 * Math.sin(now / 320);
 
+    // Group every non-animating token by its anchor cell so stacked tokens
+    // splay slightly instead of overlapping.
     const groups = new Map();
     for (const t of tokens) {
+      if (t === animatingToken) continue;
       const a = tokenAnchor(t);
       const k = Math.round(a.x) + '_' + Math.round(a.y);
       if (!groups.has(k)) groups.set(k, []);
@@ -647,6 +773,15 @@
         }
         drawTokenAt(pos.x + dx, pos.y + dy, t.player, movableSet.has(t) ? pulse : 0);
       });
+    }
+
+    // The animating token rides on top, interpolated between waypoints with
+    // a small arc-lift per step so each hop reads as a discrete jump.
+    if (animatingToken) {
+      const ap = animationPos();
+      const canvasPos = svg(ap.x, ap.y);
+      const lift = Math.sin(ap.frac * Math.PI) * tokenR() * 0.45;
+      drawTokenAt(canvasPos.x, canvasPos.y - lift, animatingToken.player, 0);
     }
   }
 
@@ -995,6 +1130,7 @@
     drawSoundButton();
     if (winner) drawWinnerOverlay();
 
+    tickAnimation(now);
     aiTick(now);
 
     requestAnimationFrame(loop);
