@@ -160,15 +160,17 @@
   }
   function sfxDiceShake() {
     // Rattling sequence — emulates two cubes clattering against each other.
-    noiseBurst(0.05, 3500, 2.5, 0.18);
-    setTimeout(() => noiseBurst(0.05, 2800, 2.5, 0.16),  90);
-    setTimeout(() => noiseBurst(0.05, 3800, 2.5, 0.14), 200);
-    setTimeout(() => noiseBurst(0.05, 3200, 2.5, 0.14), 320);
-    setTimeout(() => noiseBurst(0.05, 3600, 2.5, 0.12), 450);
+    // Gains softened ~60% from first pass; lower Q makes the noise less
+    // resonant so it sits beneath the visual rather than over it.
+    noiseBurst(0.035, 3500, 1.5, 0.07);
+    setTimeout(() => noiseBurst(0.035, 2800, 1.5, 0.06),  90);
+    setTimeout(() => noiseBurst(0.035, 3800, 1.5, 0.05), 200);
+    setTimeout(() => noiseBurst(0.035, 3200, 1.5, 0.05), 320);
+    setTimeout(() => noiseBurst(0.035, 3600, 1.5, 0.04), 450);
   }
   function sfxDiceLand() {
-    noiseBurst(0.10, 800, 1.5, 0.25);
-    setTimeout(() => tone(210, 0.10, 0.10, 'sine'), 20);
+    noiseBurst(0.08, 700, 1.0, 0.10);
+    setTimeout(() => tone(210, 0.08, 0.045, 'sine'), 20);
   }
   function sfxMove()    { tone(440, 0.05, 0.045, 'sine'); }
   function sfxUnlock()  { tone(660, 0.10, 0.06,  'triangle'); setTimeout(() => tone(880, 0.10, 0.06, 'triangle'), 70); }
@@ -185,15 +187,16 @@
   }
 
   // ---------- GAME CONFIG ----------
-  // The HUMAN always plays GREEN; the other 1, 2, or 3 colours are AI. Player
-  // count is chosen on the start menu. Going around the cross clockwise:
-  //   green (TL) → yellow (TR) → blue (BR) → red (BL)
-  // 2P uses diagonal opposites for fairness; 3P drops red.
-  const HUMAN = 'green';
+  // The HUMAN always plays RED (bottom-left, closest to the player on a phone
+  // held in either hand). The other 1, 2, or 3 colours are AI. Turn order
+  // follows the perimeter cycle starting from red, so the player always rolls
+  // first: red → green → yellow → blue → red.
+  // 2P uses diagonal opposites for fairness (red + yellow); 3P drops blue.
+  const HUMAN = 'red';
   const TURN_ORDER_BY_COUNT = {
-    2: ['green', 'blue'],
-    3: ['green', 'yellow', 'blue'],
-    4: ['green', 'yellow', 'blue', 'red'],
+    2: ['red', 'yellow'],
+    3: ['red', 'green', 'yellow'],
+    4: ['red', 'green', 'yellow', 'blue'],
   };
   let playerCount = 4;
   let turnOrder = TURN_ORDER_BY_COUNT[4];
@@ -894,7 +897,7 @@
     ctx.fillText('LUDO', cx, yTitle - 18);
     ctx.fillStyle = C.textDim;
     ctx.font = '500 16px Inter, sans-serif';
-    ctx.fillText('You play Green. Choose how many players today.', cx, yTitle + 18);
+    ctx.fillText('You play Red. Choose how many players today.', cx, yTitle + 18);
 
     // Three big square buttons in a row.
     const btnSize = Math.min(140, S * 0.20);
