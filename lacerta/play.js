@@ -134,7 +134,12 @@
   // at the top edge → cooler slate at the bottom), a thin definition line
   // at the horizon, and tile-based procedural specks that scroll with the
   // world to break up the otherwise-flat plane.
-  const TERRAIN_BASE_Y = H - 110;      // top edge of the ground band
+  // Ground is now hidden — houses line the bottom of the canvas as a
+  // continuous skyline, each with 5 % of its height extending below the
+  // canvas edge so they read as continuing off-screen.
+  const TERRAIN_BASE_Y = H;            // bombs treat the canvas bottom as ground
+  const HOUSE_UNDERLAP = 0.05;         // fraction of house height that sits below the canvas
+  const HOUSE_RENDER_H = 220;
 
   // Per-tile detail pattern. One tile is 800 logical px wide; we generate a
   // fixed deterministic set of specks within it, then repeat tiles across
@@ -176,48 +181,8 @@
   function terrainHeightAt(_worldX) { return TERRAIN_BASE_Y; }
 
   function drawTerrain() {
-    // Soft vertical gradient base.
-    const grad = ctx.createLinearGradient(0, TERRAIN_BASE_Y, 0, H);
-    grad.addColorStop(0,    '#c8b89a');   // warm cream at the horizon
-    grad.addColorStop(0.55, '#9e8e76');
-    grad.addColorStop(1,    '#7a6c5c');   // cooler slate at the bottom
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, TERRAIN_BASE_Y, W, H - TERRAIN_BASE_Y);
-
-    // Definition line along the top edge.
-    ctx.strokeStyle = '#5e5448';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(0, TERRAIN_BASE_Y);
-    ctx.lineTo(W, TERRAIN_BASE_Y);
-    ctx.stroke();
-
-    // Detail specks + streaks, tiled. Scroll offset matches the ground
-    // parallax so specks slide past at the same pace as ground stations.
-    const offsetX = (player.worldX * PARALLAX.ground) % DETAIL_TILE_W;
-    for (let tileX = -offsetX; tileX < W; tileX += DETAIL_TILE_W) {
-      for (const d of detailTile) {
-        const x = tileX + d.x;
-        if (x < -50 || x > W + 50) continue;
-        const y = TERRAIN_BASE_Y + d.yOff;
-        ctx.save();
-        ctx.globalAlpha = d.alpha;
-        if (d.kind === 'streak') {
-          ctx.strokeStyle = d.color;
-          ctx.lineWidth = 0.8;
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + d.len, y);
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = d.color;
-          ctx.beginPath();
-          ctx.arc(x, y, d.r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-    }
+    // Terrain band hidden — houses now line the canvas bottom as the skyline.
+    // detailTile is kept loaded in case we want to revive it later.
   }
 
   // Ground stations live in WORLD-X space; they slide left as the world
@@ -235,15 +200,16 @@
     stations.push({ worldX, hp: 1, alive: true, img });
   }
   function updateStations(now, dt) {
+    // Spawn cadence accelerated so the bottom of the canvas reads as a
+    // continuous skyline rather than discrete buildings dotted along it.
     if (now >= nextStationAt) {
       spawnStation(now);
-      nextStationAt = now + 2800 + Math.random() * 1600;  // every 2.8..4.4s
+      nextStationAt = now + 900 + Math.random() * 700;     // every 0.9..1.6s
     }
     for (let i = stations.length - 1; i >= 0; i--) {
       const s = stations[i];
-      // Despawn off-screen left or when destroyed long enough.
       const screenX = s.worldX - player.worldX * PARALLAX.ground;
-      if (screenX < -80) stations.splice(i, 1);
+      if (screenX < -260) stations.splice(i, 1);
     }
   }
   function stationScreenX(s) {
@@ -254,19 +220,14 @@
       if (!s.alive || !s.img) continue;
       const sx = stationScreenX(s);
       if (sx < -200 || sx > W + 200) continue;
-      const groundY = terrainHeightAt(s.worldX);
-      // Render the house PNG anchored at its bottom-centre, sitting ON the
-      // terrain horizon. Height tuned so most houses span ~200 px tall
-      // (their natural aspect varies; width follows from that).
-      const targetH = 200;
+      // Anchor each house so 5 % of its height extends BELOW the canvas
+      // bottom — the buildings read as continuing off-screen, a city
+      // viewed from above.
+      const targetH = HOUSE_RENDER_H;
       const targetW = targetH * (s.img.width / s.img.height);
-      ctx.drawImage(
-        s.img,
-        sx - targetW / 2,
-        groundY - targetH,
-        targetW,
-        targetH
-      );
+      const bottom = H + targetH * HOUSE_UNDERLAP;        // 5 % below the canvas
+      const top    = bottom - targetH;
+      ctx.drawImage(s.img, sx - targetW / 2, top, targetW, targetH);
     }
   }
 
@@ -296,18 +257,34 @@
       // World scroll pushes the bomb leftward too — same parallax as ground.
       b.x  -= BASE_SPEED * player.throttle * dt * PARALLAX.ground / 16;
 
-      // Terrain impact
-      const worldX = (b.x + player.worldX * PARALLAX.ground);
-      const groundY = terrainHeightAt(worldX);
-      if (b.y >= groundY) {
-        bombExplode(b.x, groundY);
+      // House collision — bombs now detonate ON contact with a building
+      // instead of falling all the way to the canvas bottom.
+      let exploded = false;
+      for (const s of stations) {
+        if (!s.alive || !s.img) continue;
+        const sx = stationScreenX(s);
+        const targetH = HOUSE_RENDER_H;
+        const targetW = targetH * (s.img.width / s.img.height);
+        const top = H + targetH * HOUSE_UNDERLAP - targetH;
+        const left = sx - targetW / 2;
+        const right = sx + targetW / 2;
+        if (b.x >= left && b.x <= right && b.y >= top) {
+          bombExplode(b.x, Math.max(b.y, top + 24));
+          bombs.splice(i, 1);
+          exploded = true;
+          break;
+        }
+      }
+      if (exploded) continue;
+
+      // Fallback: bomb hit the canvas bottom (between buildings).
+      if (b.y >= H) {
+        bombExplode(b.x, H);
         bombs.splice(i, 1);
         continue;
       }
-      // Off-screen despawn
-      if (b.x < -30 || b.x > W + 80 || b.y > H + 60) {
-        bombs.splice(i, 1);
-      }
+      // Off-screen left/right despawn.
+      if (b.x < -30 || b.x > W + 80) bombs.splice(i, 1);
     }
   }
   function bombExplode(x, y) {
