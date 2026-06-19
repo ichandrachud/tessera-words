@@ -204,7 +204,7 @@
     // continuous skyline rather than discrete buildings dotted along it.
     if (now >= nextStationAt) {
       spawnStation(now);
-      nextStationAt = now + 900 + Math.random() * 700;     // every 0.9..1.6s
+      nextStationAt = now + 380 + Math.random() * 320;     // every 0.38..0.70s (packed skyline)
     }
     for (let i = stations.length - 1; i >= 0; i--) {
       const s = stations[i];
@@ -721,7 +721,7 @@
     // Render the player aircraft at ~75 tall. The new PNG planes have more
     // visible detail (rivets, panels, propellers) than the old vector ships,
     // so a slightly larger render reads well without dominating the screen.
-    const targetH = 75;
+    const targetH = 52;
     const targetW = targetH * (img.width / img.height);
     ctx.save();
     ctx.translate(player.screenX, player.y);
@@ -788,7 +788,7 @@
       // Render enemies at the same nominal height as the player (75 tall).
       // Each enemy carries its own PNG (chosen at spawn), so the pool gives
       // visual variety without per-frame hue-rotate.
-      const targetH = 75;
+      const targetH = 52;
       const targetW = targetH * (en.img.width / en.img.height);
       ctx.save();
       ctx.translate(en.x, en.y);
