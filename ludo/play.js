@@ -304,6 +304,11 @@
   let capturedThisRoll = false;
   // AI scheduling — milliseconds-of-time when the next AI action fires.
   let aiActionAt = 0;
+  // Monotonically bumped each turn. setTimeout-deferred endTurn calls capture
+  // the seq at schedule time and bail when they fire on a different turn —
+  // prevents a stale "no legal moves" timer from advancing the player a second
+  // time after the AI has already passed via aiMakeOneMove.
+  let turnSeq = 0;
   // Move animation — when set, the engine is in the middle of sliding a token
   // through its waypoints. Input is blocked, dice/turn flow paused.
   let animation = null;
@@ -516,6 +521,11 @@
     rollAnim = null;
     capturedThisRoll = false;
     aiActionAt = 0;
+    turnSeq++;
+  }
+  function scheduleEndTurn(delay) {
+    const seq = turnSeq;
+    setTimeout(() => { if (seq === turnSeq) endTurn(); }, delay);
   }
   function performRoll() {
     if (scene !== 'rolling' || winner) return;
@@ -536,7 +546,7 @@
     autoSelectIfForced();
     if (!diesUsableMap()[0] && !diesUsableMap()[1]) {
       lastMoveMsg = 'No legal moves — ' + PLAYERS[activePlayer()].name + ' passes.';
-      setTimeout(endTurn, 900);
+      scheduleEndTurn(900);
     } else {
       lastMoveMsg = '';
     }
@@ -714,7 +724,7 @@
       const usable = diesUsableMap();
       if (!usable[0] && !usable[1]) {
         lastMoveMsg = 'No move with remaining die — turn ends.';
-        setTimeout(endTurn, 700);
+        scheduleEndTurn(700);
       }
     });
   }
