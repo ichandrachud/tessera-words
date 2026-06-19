@@ -370,9 +370,9 @@
       img,
       x: W + 300,
       y: yMin + Math.random() * (yMax - yMin),
-      targetH: 80 + Math.random() * 140,            // 80..220 tall — varied scale
-      depthSpeed: 0.18 + Math.random() * 0.35,      // 0.18..0.53x world rate
-      alpha: 0.55 + Math.random() * 0.35,           // 0.55..0.90 fade
+      targetH: 45 + Math.random() * 55,             // 45..100 tall (smaller = farther)
+      depthSpeed: 0.05 + Math.random() * 0.10,      // 0.05..0.15x world rate (very slow)
+      alpha: 0.35 + Math.random() * 0.20,           // 0.35..0.55 (atmospheric fade)
       spawnedWorldX: player.worldX,
     });
   }
