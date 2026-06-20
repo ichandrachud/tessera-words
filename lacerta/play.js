@@ -117,9 +117,9 @@
   // apartments sit on). Their wheels sit just above the bottom edge of the
   // canvas and they're rendered at 60 % of the previous size.
   const ROAD_BOTTOM_Y   = H - 8;
-  const TANK_BODY_H     = 66;
-  const TANK_TURRET_H   = 22;
-  const TRUCK_H         = 60;
+  const TANK_BODY_H     = 76;        // 15 % larger than previous 66
+  const TANK_TURRET_H   = 25;        // 15 % larger than previous 22
+  const TRUCK_H         = 69;        // 15 % larger than previous 60
   const STAGE_TOP_Y     = -3 * H;        // ceiling sits 3 screens above the canvas
   const STAGE_BOTTOM_Y  = H;             // bottom of the visible canvas
 
@@ -164,8 +164,8 @@
     invulnUntil: 0,
     alive: true,
   };
-  const MIN_SPEED   = 0.16;     // px / ms at throttle 0
-  const MAX_SPEED   = 0.48;     // px / ms at throttle 1
+  const MIN_SPEED   = 0.08;     // px / ms at throttle 0  (50 % of previous 0.16)
+  const MAX_SPEED   = 0.24;     // px / ms at throttle 1  (50 % of previous 0.48)
   const TURN_RATE   = 2.4;      // rad / sec — how fast the nose rotates
   const THROTTLE_RATE = 0.55;   // throttle units per second of held key
 
@@ -400,10 +400,22 @@
     const worldY = desiredScreenY + cameraY * parallax;
     clouds.push({ img, worldX, worldY, parallax, drift, targetH, alpha });
   }
+  let cloudsSeeded = false;
   function updateClouds(now, dt) {
-    // Pre-seed the sky with a spread of clouds the first frame.
-    if (now < 200 && clouds.length < MAX_CLOUDS) {
-      for (let i = 0; i < MAX_CLOUDS; i++) spawnCloud(now, { fromLeft: Math.random() < 0.5 });
+    // Pre-seed the sky with a spread of clouds the first time we have assets.
+    // (Used to gate on `now < 200`, but performance.now() is already in the
+    // thousands by the time the game loop runs, so the seed never fired and
+    // the sky stayed cloudless.)
+    if (!cloudsSeeded && assets.clouds.length) {
+      for (let i = 0; i < MAX_CLOUDS; i++) {
+        // Spread initial clouds across the visible width by spawning some
+        // from the left and some from the right.
+        spawnCloud(now, { fromLeft: i % 2 === 0 });
+        // Nudge each cloud's worldX a bit so they're not all stacked.
+        const c = clouds[clouds.length - 1];
+        c.worldX -= (Math.random() * W * 0.8);
+      }
+      cloudsSeeded = true;
     }
     if (now >= nextCloudAt && clouds.length < MAX_CLOUDS) {
       spawnCloud(now);
@@ -421,11 +433,12 @@
   let gameOver = false;
   let win = false;
   function targetsRemaining() {
+    // Apartments are background scenery — only planes, tanks, and trucks
+    // count toward stage completion.
     let n = 0;
-    for (const a of apartments) if (a.alive) n++;
-    for (const e of enemies)   if (e.alive) n++;
-    for (const t of tanks)     if (t.alive) n++;
-    for (const k of trucks)    if (k.alive) n++;
+    for (const e of enemies) if (e.alive) n++;
+    for (const t of tanks)   if (t.alive) n++;
+    for (const k of trucks)  if (k.alive) n++;
     return n;
   }
 
@@ -458,7 +471,7 @@
     if (player.y > FLIGHT_Y_MAX)     { player.y = FLIGHT_Y_MAX; }
 
     updateCamera();
-    updateClouds(now);
+    updateClouds(now, dt);
 
     // ----- Fire (Space) -----
     heat = Math.max(0, heat - HEAT_COOL_PER_MS * dt);
@@ -482,13 +495,24 @@
     const ENEMY_TURN_RATE = 0.9;
     const ENEMY_WANDER_MIX = 0.40;          // fraction of heading set by wander vs pure chase
 
+    // Cap concurrent awake enemies at 2: only the two closest live enemies
+    // within wake range are activated each frame. When one dies, the next
+    // closest joins the fight.
+    const ACTIVE_ENEMY_CAP = 2;
+    const wakeCandidates = enemies
+      .filter(e => e.alive && Math.abs(player.x - e.x) < WAKE_RANGE_X)
+      .map(e => ({ e, d: Math.hypot(player.x - e.x, player.y - e.y) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, ACTIVE_ENEMY_CAP)
+      .map(o => o.e);
+    for (const e of enemies) e.awake = wakeCandidates.includes(e);
+
     for (let i = enemies.length - 1; i >= 0; i--) {
       const en = enemies[i];
       if (!en.alive) continue;
 
       const dx0 = player.x - en.x, dy0 = player.y - en.y;
       const dist = Math.hypot(dx0, dy0);
-      if (!en.awake && Math.abs(dx0) < WAKE_RANGE_X) en.awake = true;
       if (!en.awake) continue;
 
       // Refresh wander offset every 0.8-1.6 s — small ±0.6 rad bias added to
@@ -597,19 +621,8 @@
       }
       if (consumed) { bullets.splice(i, 1); continue; }
 
-      for (let j = apartments.length - 1; j >= 0; j--) {
-        const a = apartments[j];
-        if (!a.alive) continue;
-        const top = STREET_TOP_Y - a.h;
-        if (b.x >= a.x - a.w / 2 && b.x <= a.x + a.w / 2 && b.y >= top && b.y <= STREET_TOP_Y) {
-          a.hp -= 1;
-          if (a.hp <= 0) { a.alive = false; spawnExplosion(b.x, top + a.h * 0.35, true); }
-          else           { spawnExplosion(b.x, b.y, false); }
-          consumed = true;
-          break;
-        }
-      }
-      if (consumed) { bullets.splice(i, 1); continue; }
+      // Apartments are pure background scenery now — bullets pass through
+      // them without doing damage. (Used to be destructible targets.)
 
       // Tanks — body rectangle hit zone (turret rotates so we only check body).
       for (let j = tanks.length - 1; j >= 0; j--) {
@@ -702,7 +715,7 @@
       const aspect = c.img.width / c.img.height;
       const w = c.targetH * aspect;
       const screenX = c.worldX - cameraX * c.parallax;
-      const screenY = c.y - cameraY * c.parallax;
+      const screenY = c.worldY - cameraY * c.parallax;
       ctx.save();
       ctx.globalAlpha = c.alpha;
       ctx.drawImage(c.img, screenX - w / 2, screenY - c.targetH / 2, w, c.targetH);
@@ -870,7 +883,7 @@
   function drawEnemies() {
     for (const en of enemies) {
       if (!en.alive || !en.img) continue;
-      drawAircraft(en.img, en.x, en.y, en.heading, 60);
+      drawAircraft(en.img, en.x, en.y, en.heading, 42);  // 30 % smaller than the hero (60)
     }
   }
 
@@ -990,11 +1003,7 @@
     // Ground line.
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     ctx.fillRect(mmX, mapWY(STREET_TOP_Y), mmW, 1);
-    for (const a of apartments) {
-      if (!a.alive) continue;
-      ctx.fillStyle = '#FFB347';
-      ctx.fillRect(mapWX(a.x) - 1, mapWY(STREET_TOP_Y) - 2, 2, 2);
-    }
+    // Apartments aren't targets anymore — dropped from the minimap dots.
     for (const k of trucks) {
       if (!k.alive) continue;
       ctx.fillStyle = '#FFD23F';
