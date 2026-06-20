@@ -881,10 +881,27 @@
     player.y += Math.sin(player.heading) * sp * dt;
 
     // Stage bounds — soft clamp + lose energy on hit (no instant death yet).
-    if (player.x < 30)               { player.x = 30;               player.heading = 0; }
-    if (player.x > STAGE_W - 30)     { player.x = STAGE_W - 30;     player.heading = Math.PI; }
-    if (player.y < FLIGHT_Y_MIN)     { player.y = FLIGHT_Y_MIN; }
-    if (player.y > FLIGHT_Y_MAX)     { player.y = FLIGHT_Y_MAX; }
+    // Stage-edge reflection — instead of stalling the plane against the
+    // wall, bounce it off the same way a billiard ball would: flip the
+    // velocity component perpendicular to the wall, keep the parallel
+    // component. For a vertical wall (left / right) that's heading → π − h
+    // (negates cos). For a horizontal wall (top / bottom) it's heading → −h
+    // (negates sin). The plane continues moving forward in its NEW heading,
+    // so the trajectory reads as a clean ricochet.
+    if (player.x < 30) {
+      player.x = 30;
+      player.heading = normalizeAngle(Math.PI - player.heading);
+    } else if (player.x > STAGE_W - 30) {
+      player.x = STAGE_W - 30;
+      player.heading = normalizeAngle(Math.PI - player.heading);
+    }
+    if (player.y < FLIGHT_Y_MIN) {
+      player.y = FLIGHT_Y_MIN;
+      player.heading = normalizeAngle(-player.heading);
+    } else if (player.y > FLIGHT_Y_MAX) {
+      player.y = FLIGHT_Y_MAX;
+      player.heading = normalizeAngle(-player.heading);
+    }
 
     updateCamera();
     updateClouds(now, dt);
