@@ -1777,30 +1777,21 @@
     ctx.restore();
   }
 
-  // Intro / mission briefing screen — uses the original Lacerta night-sky
-  // gradient (deep blue at the bottom → dark space at the top) as the
-  // backdrop. Title + mission + controls; dismissed by Space / Tap.
+  // Intro / mission briefing screen — backdrop is the live day scene (sky +
+  // street + buildings) with everything else stripped out (no planes, no
+  // vehicles, no clouds, no HUD). Title + mission + controls layered on top.
   function drawIntro(now) {
-    // Night-sky gradient (skybackground.svg colours, planets-free).
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0.00, '#2e313a');
-    g.addColorStop(0.35, '#2e3192');
-    g.addColorStop(0.73, '#005b97');
-    g.addColorStop(1.00, '#0075be');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
-
-    // Faint star dots so the dark band reads as space rather than flat fill.
-    // Deterministic positions so they don't twinkle randomly each frame.
+    // Day-scene backdrop. Each draw function early-returns if its asset hasn't
+    // loaded yet, so a fallback fill covers the brief gap before they arrive.
+    clearBg();
+    drawSky();
+    drawStreet();
+    drawApartments();
+    drawMilitaryBodies();
+    // Slight dark vignette so the title and cards read crisply on top.
     ctx.save();
-    for (let i = 0; i < 60; i++) {
-      const sx = ((i * 73) % W);
-      const sy = ((i * 137) % (H * 0.45));
-      const r = (i % 5 === 0) ? 1.4 : 0.8;
-      const alpha = 0.25 + ((i * 37) % 70) / 200;
-      ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
-      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2); ctx.fill();
-    }
+    ctx.fillStyle = 'rgba(0, 8, 24, 0.32)';
+    ctx.fillRect(0, 0, W, H);
     ctx.restore();
 
     const cx = W / 2;
