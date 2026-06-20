@@ -543,7 +543,16 @@
     const img = assets.street;
     const tileH = STREET_H;
     const tileW = tileH * (img.width / img.height);
-    for (let x = 0; x < W; x += tileW) {
+    // The source PNG has a brighter "lit patch" at its horizontal centre —
+    // that's the vanishing point of the cobblestone perspective. Anchor the
+    // first tile so its centre lines up with the canvas centre, then mirror
+    // tiles outward until the strip covers the full viewport width.
+    const startX = Math.round((W - tileW) / 2);
+    ctx.drawImage(img, startX, streetScreenY, tileW + 1, tileH);
+    for (let x = startX + tileW; x < W; x += tileW) {
+      ctx.drawImage(img, x, streetScreenY, tileW + 1, tileH);
+    }
+    for (let x = startX - tileW; x > -tileW; x -= tileW) {
       ctx.drawImage(img, x, streetScreenY, tileW + 1, tileH);
     }
   }
