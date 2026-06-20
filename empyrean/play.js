@@ -88,7 +88,7 @@
   };
   loadImage('./assets/sky/sky.jpg').then(img => { assets.sky = img; });
   loadImage('./assets/street/street2.jpg').then(img => { assets.street = img; });
-  loadImage('./assets/planes-v2/HeroAircraft1.png').then(img => { assets.player = img; });
+  loadImage('./assets/planes-v2/Tsunami.png').then(img => { assets.player = img; });
   Promise.all([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n =>
     loadImage(`./assets/planes-v2/enemy-aircraft${n}.png`)
   )).then(imgs => { assets.enemies = imgs.filter(Boolean); buildStageIfReady(); });
