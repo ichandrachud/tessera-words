@@ -686,21 +686,13 @@
   const particles = [];
   let lastShotAt = 0;
   let lastBombAt = 0;
-  let heat = 0;
-  let overheated = false;
   const BOMB_COOLDOWN = 450;        // ms between bomb drops
   const BOMB_GRAVITY  = 0.0009;     // px / ms²
   const BOMB_RADIUS   = 6;          // visual + collision radius
-  // Fire rate / heat tuned for sustained engagements: ~40 shots before
-  // overheat, and a < 0.5 s cool-down from overheat back to firing — players
-  // shouldn't feel like the gun is permanently broken after a short burst.
-  // Heat is now a generous stamina meter — at 10 shots / sec the gun runs
-  // for ~8 seconds before any overheat, and recovers from a full overheat
-  // in well under a second. The previous tuning was reading as "the gun
-  // stopped firing" because the cool-down delay felt arbitrary.
+  // Fire rate — unlimited bullets, throttled only by FIRE_INTERVAL. The heat
+  // / overheat stamina meter was removed because it kept reading as "the gun
+  // stopped firing" no matter how generously it was tuned.
   const FIRE_INTERVAL    = 100;        // 10 shots / second
-  const HEAT_PER_SHOT    = 0.012;      // ≈ 83 shots → 8.3 s before overheat
-  const HEAT_COOL_PER_MS = 0.004;      // full cool in 250 ms; re-fire ≈ 175 ms
   const BULLET_SPEED     = 1.05;   // px / ms
   const BULLET_LIFE_MS   = 1100;
   const PLAYER_HIT_R     = 24;
@@ -929,14 +921,10 @@
     updateVehicleAmbient();
 
     // ----- Fire (Space) -----
-    heat = Math.max(0, heat - HEAT_COOL_PER_MS * dt);
-    if (overheated && heat < 0.30) overheated = false;
-    if (keys[' '] && !overheated && (now - lastShotAt) >= FIRE_INTERVAL) {
+    if (keys[' '] && (now - lastShotAt) >= FIRE_INTERVAL) {
       spawnPlayerBullet();
       sfxGun(now);
       lastShotAt = now;
-      heat += HEAT_PER_SHOT;
-      if (heat >= 1) { heat = 1; overheated = true; }
     }
 
     // ----- Bomb (B key on desktop / double-tap on mobile) -----
@@ -1723,21 +1711,13 @@
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.fillText('HP', x + 210, hpY + 5);
 
-    // Heat
+    // Throttle (replaces the old HEAT bar — heat / overheat removed)
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     ctx.fillRect(x, htY, 200, 6);
-    ctx.fillStyle = overheated ? '#FF6B5C' : '#FFB347';
-    ctx.fillRect(x, htY, 200 * heat, 6);
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.fillText(overheated ? 'COOLING' : 'HEAT', x + 210, htY + 3);
-
-    // Throttle indicator below
-    ctx.fillStyle = 'rgba(255,255,255,0.10)';
-    ctx.fillRect(x, htY + 14, 200, 6);
     ctx.fillStyle = '#7DD8FF';
-    ctx.fillRect(x, htY + 14, 200 * player.throttle, 6);
+    ctx.fillRect(x, htY, 200 * player.throttle, 6);
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.fillText('THROTTLE', x + 210, htY + 17);
+    ctx.fillText('THROTTLE', x + 210, htY + 3);
 
     // Right-side: targets remaining + minimap.
     ctx.font = '800 14px Inter, sans-serif';
