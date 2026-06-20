@@ -1798,10 +1798,10 @@
     // left-cluster, and the whole composition centred in the SKY band of
     // the canvas (above the building skyline). Keycap outlines are medium
     // grey, instructional copy is dark grey.
-    const KEY_H    = 44;                  // all caps the same height
-    const KEY_PAD  = 12;
-    const KEY_STROKE = 'rgba(120, 120, 120, 0.85)';
-    const LABEL_COLOR = '#2c3140';        // dark grey instructional copy
+    const KEY_H    = 68;                  // chunky keycaps matching the reference
+    const KEY_PAD  = 18;
+    const KEY_STROKE = 'rgba(130, 130, 130, 0.85)';
+    const LABEL_COLOR = '#1a2030';        // dark instructional copy
     function measureKey(label, font) {
       ctx.font = font;
       const m = ctx.measureText(label);
@@ -1815,21 +1815,21 @@
       if (dir === 'right') ctx.rotate(Math.PI / 2);
       if (dir === 'down')  ctx.rotate(Math.PI);
       if (dir === 'left')  ctx.rotate(-Math.PI / 2);
-      // Default orientation = pointing UP.
+      // Default orientation = pointing UP. Sized for the larger keycaps.
       ctx.strokeStyle = '#1a2030';
       ctx.fillStyle   = '#1a2030';
-      ctx.lineWidth   = 2.2;
+      ctx.lineWidth   = 3.4;
       ctx.lineCap     = 'square';
       // Shaft
       ctx.beginPath();
-      ctx.moveTo(0, 9);
-      ctx.lineTo(0, -3);
+      ctx.moveTo(0, 13);
+      ctx.lineTo(0, -4);
       ctx.stroke();
       // Triangular head
       ctx.beginPath();
-      ctx.moveTo(0, -11);
-      ctx.lineTo(-6.5, -1);
-      ctx.lineTo(6.5, -1);
+      ctx.moveTo(0, -17);
+      ctx.lineTo(-10, -2);
+      ctx.lineTo(10, -2);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
@@ -1871,8 +1871,8 @@
       return ctx.measureText(text).width;
     }
 
-    const keyFont  = '800 22px Inter, sans-serif';
-    const textFont = '600 18px Inter, sans-serif';
+    const keyFont  = '900 32px Inter, sans-serif';
+    const textFont = '700 22px Inter, sans-serif';
 
     // Centre the WHOLE unit vertically in the sky band (top of canvas to
     // apartment roof-line). The unit is three rows tall: ↑ row, mid row,
@@ -1910,53 +1910,47 @@
       return anchors;
     }
 
-    // Row 1 — movement: anchor the d-pad cross at the EXACT canvas centre,
-    // then hang the 'Use keys to move' label off the left of ←. Keeping the
-    // d-pad geometrically centred on screen (rather than centring the whole
-    // row) is what makes the 3 × 3 grid read as 'on centre'.
+    // Row 1 — movement: label + ← + → laid out as ONE centred row, per the
+    // reference. ↑ and ↓ then stack above / below the midpoint of ← and →,
+    // forming a proper 3 × 3 d-pad cross with the centre cell empty.
+    const moveAnchors = layoutCenteredRow([
+      { kind: 'text', value: 'Use keys to move' },
+      { kind: 'gap',  value: 22 },
+      { kind: 'key',  value: '←' },
+      { kind: 'gap',  value: 18 },
+      { kind: 'key',  value: '→' },
+    ], midY);
+    const dpadCenterX = (moveAnchors['←'] + moveAnchors['→']) / 2;
     const arrowW = measureKey('↑', keyFont);
-    const ARROW_GAP = 8;
-    const leftX  = Math.round(cx - ARROW_GAP / 2 - arrowW);
-    const rightX = Math.round(cx + ARROW_GAP / 2);
-    drawKey('←', leftX,  midY, keyFont);
-    drawKey('→', rightX, midY, keyFont);
-    // Label sits to the left of ← with a 14 px gap.
-    ctx.font = textFont;
-    const labelText  = 'Use keys to move';
-    const labelW     = ctx.measureText(labelText).width;
-    const labelXEnd  = leftX - 14;
-    drawText(labelText, labelXEnd - labelW, midY + 1, textFont, LABEL_COLOR);
-
-    // ↑ and ↓ at canvas centre — completes the 3×3 d-pad grid.
-    const dpadCenterX = cx;
     drawKey('↑', dpadCenterX - arrowW / 2, upY,   keyFont);
     drawKey('↓', dpadCenterX - arrowW / 2, downY, keyFont);
 
     // Row 2 — actions: Space / B / M each followed by their label, centred.
     layoutCenteredRow([
       { kind: 'key',  value: 'Space' },
-      { kind: 'gap',  value: 8 },
+      { kind: 'gap',  value: 14 },
       { kind: 'text', value: 'to fire' },
-      { kind: 'gap',  value: 28 },
+      { kind: 'gap',  value: 40 },
       { kind: 'key',  value: 'B' },
-      { kind: 'gap',  value: 8 },
+      { kind: 'gap',  value: 14 },
       { kind: 'text', value: 'to drop a bomb' },
-      { kind: 'gap',  value: 28 },
+      { kind: 'gap',  value: 40 },
       { kind: 'key',  value: 'M' },
-      { kind: 'gap',  value: 8 },
+      { kind: 'gap',  value: 14 },
       { kind: 'text', value: 'mute' },
-    ], downY + 60);
+    ], downY + 90);
 
     // ----- Start prompt (slow, gentle fade) -----
     // 6.3-second full cycle (sin period 2π / 0.001) → fade in / out lasts
-    // about 3 s each direction. Alpha ramps 0.20 → 0.95 → 0.20.
-    const fade = 0.575 + 0.375 * Math.sin(now * 0.001);
-    ctx.font = '700 18px Inter, sans-serif';
-    ctx.fillStyle = `rgba(40, 50, 70, ${fade.toFixed(2)})`;
+    // about 3 s each direction. Alpha ramps 0.45 → 1.0 → 0.45 so the prompt
+    // stays clearly readable through the entire fade.
+    const fade = 0.725 + 0.275 * Math.sin(now * 0.001);
+    ctx.font = '800 22px Inter, sans-serif';
+    ctx.fillStyle = `rgba(20, 26, 36, ${fade.toFixed(2)})`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const isMobileStart = MODE === 'mobile';
-    ctx.fillText(isMobileStart ? 'tap to start' : 'press space to start', cx, downY + 120);
+    ctx.fillText(isMobileStart ? 'tap to start' : 'press space to start', cx, downY + 175);
 
   }
 
