@@ -207,9 +207,12 @@
   let lastShotAt = 0;
   let heat = 0;
   let overheated = false;
-  const FIRE_INTERVAL    = 140;
-  const HEAT_PER_SHOT    = 0.07;
-  const HEAT_COOL_PER_MS = 0.0006;
+  // Fire rate / heat tuned for sustained engagements: ~40 shots before
+  // overheat, and a < 0.5 s cool-down from overheat back to firing — players
+  // shouldn't feel like the gun is permanently broken after a short burst.
+  const FIRE_INTERVAL    = 100;        // 10 shots / second
+  const HEAT_PER_SHOT    = 0.025;
+  const HEAT_COOL_PER_MS = 0.0018;
   const BULLET_SPEED     = 1.05;   // px / ms
   const BULLET_LIFE_MS   = 1100;
   const PLAYER_HIT_R     = 24;
