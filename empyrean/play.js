@@ -414,8 +414,8 @@
     invulnUntil: 0,
     alive: true,
   };
-  const MIN_SPEED   = 0.08;     // px / ms at throttle 0  (50 % of previous 0.16)
-  const MAX_SPEED   = 0.24;     // px / ms at throttle 1  (50 % of previous 0.48)
+  const MIN_SPEED   = 0.024;    // px / ms at throttle 0  (70 % slower than 0.08)
+  const MAX_SPEED   = 0.072;    // px / ms at throttle 1  (70 % slower than 0.24)
   const TURN_RATE   = 2.4;      // rad / sec — how fast the nose rotates
   const THROTTLE_RATE = 0.55;   // throttle units per second of held key
 
