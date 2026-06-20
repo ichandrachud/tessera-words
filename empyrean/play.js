@@ -1159,7 +1159,10 @@
   // Scene state — 'intro' (mission briefing + controls), 'playing' (live
   // game loop), or the gameOver flag below (set when the hero dies / clears
   // the stage). The intro is dismissed by the first Space / Tap.
-  let scene = 'intro';
+  let scene = 'splash';
+  let splashStartedAt = 0;             // first-frame timestamp for the splash hold
+  const SPLASH_MIN_MS = 3000;          // hold the splash for at least this long
+  loadImage('./splash.jpg').then(img => { assets.splash = img; });
   let gameOver = false;
   let win = false;
   function targetsRemaining() {
@@ -1183,6 +1186,18 @@
   // ---------- UPDATE ----------
   function update(dt, now) {
     if (landscapeLocked) return;
+    // Splash — held for at least SPLASH_MIN_MS, after which any input
+    // (or simply the timer expiring) advances to the intro.
+    if (scene === 'splash') {
+      if (!splashStartedAt) splashStartedAt = now;
+      const elapsed = now - splashStartedAt;
+      if (elapsed >= SPLASH_MIN_MS) {
+        scene = 'intro';
+        advanceRequested = false;       // don't let a hold-over Space jump straight past intro
+        bombRequest = false;
+      }
+      return;
+    }
     // Intro screen — wait for the first Space, B, or Tap. Then start the
     // game-audio voices and hand control over to the normal loop.
     if (scene === 'intro') {
@@ -2297,6 +2312,32 @@
   // Intro / mission briefing screen — backdrop is the live day scene (sky +
   // street + buildings) with everything else stripped out (no planes, no
   // vehicles, no clouds, no HUD). Title + mission + controls layered on top.
+  // Splash screen — full-canvas hand-painted opener with the Empyrean
+  // wordmark baked into the image. Held for SPLASH_MIN_MS before the
+  // intro screen takes over.
+  function drawSplash(now) {
+    // Match the splash background fill to the page chrome so any aspect-
+    // ratio gap reads as deliberate framing, not a missing image.
+    ctx.fillStyle = '#0a1322';
+    ctx.fillRect(0, 0, W, H);
+    if (assets.splash) {
+      const img = assets.splash;
+      // Cover-fit the splash inside the canvas — preserve aspect, fill
+      // either width or height, centre the rest.
+      const canvasAspect = W / H;
+      const imgAspect = img.width / img.height;
+      let drawW, drawH;
+      if (imgAspect > canvasAspect) {
+        drawH = H;
+        drawW = H * imgAspect;
+      } else {
+        drawW = W;
+        drawH = W / imgAspect;
+      }
+      ctx.drawImage(img, (W - drawW) / 2, (H - drawH) / 2, drawW, drawH);
+    }
+  }
+
   function drawIntro(now) {
     // Day-scene backdrop. Each draw function early-returns if its asset hasn't
     // loaded yet, so a fallback fill covers the brief gap before they arrive.
@@ -3100,6 +3141,12 @@
   let lastShakeUpdate = 0;
   function render(now) {
     lastFrameNow = now;
+    // Splash screen — full-canvas hand-painted opener, held for SPLASH_MIN_MS
+    // before the controls card appears.
+    if (scene === 'splash') {
+      drawSplash(now);
+      return;
+    }
     // Intro / mission briefing — short-circuit before all the gameplay
     // rendering. drawIntro paints its own background, so we skip clearBg too.
     if (scene === 'intro') {
