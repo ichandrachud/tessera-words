@@ -167,40 +167,58 @@
     }
   }
 
-  // Apartments live in WORLD-X space; they slide left as the world scrolls
-  // past at the same rate as the street (PARALLAX.ground). A new apartment
-  // spawns off-screen-right periodically; passes off-screen left if you
-  // don't bomb it in time. MG cannot damage them — bombs only.
-  const stations = [];  // { worldX, hp, alive, img }
-  let nextStationAt = 0;
-  function spawnStation(now) {
-    const worldX = player.worldX * PARALLAX.ground + W + 80;
+  // Apartments live in WORLD-X space; they slide left as the world scrolls.
+  // They use a HALF-SPEED parallax (0.5 × ground rate) — the buildings read
+  // as a parallax mid-ground rather than rushing past at full speed.
+  //
+  // Placement is QUEUED, not timer-based: each new spawn lands flush against
+  // the right edge of the previous one, so the strip is continuous without
+  // either overlap or visible gaps. Variable widths come naturally from the
+  // image aspect ratios. Image picks avoid an immediate repeat so consecutive
+  // buildings always look different.
+  const APARTMENT_PARALLAX = PARALLAX.ground * 0.5;
+  const stations = [];  // { worldX (center), w, h, hp, alive, img }
+  let lastStationRightEdge = -Infinity;
+  let lastStationImg = null;
+  function spawnStation() {
     const pool = assets.apartments;
-    const img = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    stations.push({ worldX, hp: 1, alive: true, img });
-  }
-  function updateStations(now, dt) {
-    // Spawn cadence keeps the street populated without buildings overlapping.
-    if (now >= nextStationAt) {
-      spawnStation(now);
-      nextStationAt = now + 520 + Math.random() * 420;     // every 0.52..0.94s
+    if (!pool.length) return;
+    let img;
+    if (pool.length === 1) {
+      img = pool[0];
+    } else {
+      do { img = pool[Math.floor(Math.random() * pool.length)]; } while (img === lastStationImg);
     }
+    lastStationImg = img;
+    const targetH = APARTMENT_RENDER_H;
+    const targetW = targetH * (img.width / img.height);
+    const cameraRightWorldX = player.worldX * APARTMENT_PARALLAX + W;
+    const leftWorldX = lastStationRightEdge === -Infinity
+      ? cameraRightWorldX + 40                                // seed first building just off-screen
+      : Math.max(lastStationRightEdge, cameraRightWorldX);    // never overlap; jump-forward if there was a gap
+    const worldX = leftWorldX + targetW / 2;
+    stations.push({ worldX, w: targetW, h: targetH, hp: 1, alive: true, img });
+    lastStationRightEdge = worldX + targetW / 2;
+  }
+  function updateStations() {
+    // Keep the queue extending at least 400 px past the visible edge so we
+    // never see a gap on the right as buildings scroll in.
+    const cameraRightWorldX = player.worldX * APARTMENT_PARALLAX + W;
+    let guard = 0;
+    while (lastStationRightEdge < cameraRightWorldX + 400 && guard++ < 12) spawnStation();
     for (let i = stations.length - 1; i >= 0; i--) {
       const s = stations[i];
-      const screenX = s.worldX - player.worldX * PARALLAX.ground;
-      if (screenX < -360) stations.splice(i, 1);
+      const sx = stationScreenX(s);
+      if (sx + s.w / 2 < -10) stations.splice(i, 1);
     }
   }
   function stationScreenX(s) {
-    return s.worldX - player.worldX * PARALLAX.ground;
+    return s.worldX - player.worldX * APARTMENT_PARALLAX;
   }
   function stationRect(s) {
-    const targetH = APARTMENT_RENDER_H;
-    const targetW = targetH * (s.img.width / s.img.height);
-    const bottom  = STREET_TOP_Y;                   // flat bottom flush with kerb
-    const top     = bottom - targetH;
-    const sx      = stationScreenX(s);
-    return { left: sx - targetW / 2, right: sx + targetW / 2, top, bottom, w: targetW, h: targetH };
+    const sx = stationScreenX(s);
+    const top = STREET_TOP_Y - s.h;
+    return { left: sx - s.w / 2, right: sx + s.w / 2, top, bottom: STREET_TOP_Y, w: s.w, h: s.h };
   }
   function drawStations() {
     for (const s of stations) {
@@ -720,13 +738,15 @@
     const img = assets.player;
     // The new HeroAircraft pack points RIGHT in the source PNG (left = rear,
     // right = front), so the player needs no horizontal flip.
-    const targetH = 70;
+    const targetH = 60;
     const targetW = targetH * (img.width / img.height);
+    // Idle bob — small constant vertical oscillation so the plane never reads
+    // as a hovering helicopter. Active even when the mouse is held still.
+    const bob = Math.sin(lastFrameNow * 0.003) * 2.2;
     ctx.save();
-    ctx.translate(player.screenX, player.y);
+    ctx.translate(player.screenX, player.y + bob);
     ctx.rotate(player.pitch * BANK_FACTOR);
     ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
-    // Propeller is at the nose — right edge of the plane in plane-local space.
     drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
     ctx.restore();
   }
@@ -782,10 +802,13 @@
   function drawEnemies() {
     for (const en of enemies) {
       if (!en.img) continue;
-      const targetH = 70;
+      const targetH = 60;
       const targetW = targetH * (en.img.width / en.img.height);
+      // Each enemy bobs on its own phase (seeded by its arrival time) so the
+      // squadron never reads as a row of stationary helicopters.
+      const bob = Math.sin(lastFrameNow * 0.0034 + (en.fireAt || 0) * 0.0007) * 1.8;
       ctx.save();
-      ctx.translate(en.x, en.y);
+      ctx.translate(en.x, en.y + bob);
       // The new enemy-aircraft pack points RIGHT in the source PNG; enemies
       // are flying LEFT toward the player, so mirror horizontally. The bank
       // sign is flipped post-mirror so a climbing enemy still tips its
