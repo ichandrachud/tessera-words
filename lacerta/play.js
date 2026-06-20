@@ -77,7 +77,7 @@
     trucks: [],
   };
   loadImage('./assets/sky/sky.jpg').then(img => { assets.sky = img; });
-  loadImage('./assets/street/street.png').then(img => { assets.street = img; });
+  loadImage('./assets/street/street2.jpg').then(img => { assets.street = img; });
   loadImage('./assets/planes-v2/HeroAircraft1.png').then(img => { assets.player = img; });
   Promise.all([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n =>
     loadImage(`./assets/planes-v2/enemy-aircraft${n}.png`)
@@ -314,29 +314,105 @@
     }
   }
 
-  // ---------- INPUT (keys only) ----------
+  // ---------- INPUT ----------
+  // Desktop = keyboard (←/→ rotate, ↑/↓ throttle, Space fire, B bomb).
+  // Mobile  = single-finger virtual stick (touch + drag = rotate / throttle,
+  //           holding fires, double-tap drops a bomb).
   const keys = Object.create(null);
+  let bombRequest = false;             // set by 'B' keydown or mobile double-tap
   window.addEventListener('keydown', (e) => {
     if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+    if (e.repeat) return;
     keys[e.key] = true;
+    if (e.key === 'b' || e.key === 'B') bombRequest = true;
   });
   window.addEventListener('keyup', (e) => { keys[e.key] = false; });
   window.addEventListener('blur', () => {
     keys.ArrowLeft = keys.ArrowRight = keys.ArrowUp = keys.ArrowDown = keys[' '] = false;
   });
 
+  // --- Mobile touch ---
+  // One finger anywhere on the canvas:
+  //   • Hold = continuous fire.
+  //   • Drag relative to where the touch started → virtual joystick that
+  //     drives the same `keys.Arrow*` flags the keyboard sets, so the
+  //     downstream update logic doesn't change.
+  //   • Double-tap (two quick releases) drops a bomb.
+  let touchOrigin = null;              // { x, y } in canvas-logical coords
+  let lastTapAt = 0;
+  const TOUCH_DEAD_RADIUS = 18;        // px from origin before any input registers
+  function canvasFromClient(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left) / rect.width  * W,
+      y: (clientY - rect.top)  / rect.height * H,
+    };
+  }
+  function applyTouchVector(curX, curY) {
+    if (!touchOrigin) return;
+    const dx = curX - touchOrigin.x;
+    const dy = curY - touchOrigin.y;
+    // Outside the dead zone, set the corresponding key flag. Beyond
+    // TOUCH_DEAD_RADIUS we treat it as a discrete direction press.
+    keys.ArrowLeft  = dx < -TOUCH_DEAD_RADIUS;
+    keys.ArrowRight = dx >  TOUCH_DEAD_RADIUS;
+    keys.ArrowUp    = dy < -TOUCH_DEAD_RADIUS;
+    keys.ArrowDown  = dy >  TOUCH_DEAD_RADIUS;
+  }
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    if (!t) return;
+    touchOrigin = canvasFromClient(t.clientX, t.clientY);
+    keys[' '] = true;                                 // fire while held
+  }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    if (!t || !touchOrigin) return;
+    const p = canvasFromClient(t.clientX, t.clientY);
+    applyTouchVector(p.x, p.y);
+  }, { passive: false });
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    touchOrigin = null;
+    keys.ArrowLeft = keys.ArrowRight = keys.ArrowUp = keys.ArrowDown = false;
+    keys[' '] = false;
+    const now = performance.now();
+    if (now - lastTapAt < 320) {
+      bombRequest = true;
+      lastTapAt = 0;                                  // consume so next single tap resets the timer
+    } else {
+      lastTapAt = now;
+    }
+  }, { passive: false });
+  canvas.addEventListener('touchcancel', () => {
+    touchOrigin = null;
+    keys.ArrowLeft = keys.ArrowRight = keys.ArrowUp = keys.ArrowDown = false;
+    keys[' '] = false;
+  });
+
   // ---------- COMBAT ----------
   const bullets   = [];   // { x, y, vx, vy, owner: 'player'|'enemy', life }
+  const bombs     = [];   // { x, y, vx, vy }     — gravity-pulled black dots
   const particles = [];
   let lastShotAt = 0;
+  let lastBombAt = 0;
   let heat = 0;
   let overheated = false;
+  const BOMB_COOLDOWN = 450;        // ms between bomb drops
+  const BOMB_GRAVITY  = 0.0009;     // px / ms²
+  const BOMB_RADIUS   = 6;          // visual + collision radius
   // Fire rate / heat tuned for sustained engagements: ~40 shots before
   // overheat, and a < 0.5 s cool-down from overheat back to firing — players
   // shouldn't feel like the gun is permanently broken after a short burst.
+  // Heat is now a generous stamina meter — at 10 shots / sec the gun runs
+  // for ~8 seconds before any overheat, and recovers from a full overheat
+  // in well under a second. The previous tuning was reading as "the gun
+  // stopped firing" because the cool-down delay felt arbitrary.
   const FIRE_INTERVAL    = 100;        // 10 shots / second
-  const HEAT_PER_SHOT    = 0.025;
-  const HEAT_COOL_PER_MS = 0.0018;
+  const HEAT_PER_SHOT    = 0.012;      // ≈ 83 shots → 8.3 s before overheat
+  const HEAT_COOL_PER_MS = 0.004;      // full cool in 250 ms; re-fire ≈ 175 ms
   const BULLET_SPEED     = 1.05;   // px / ms
   const BULLET_LIFE_MS   = 1100;
   const PLAYER_HIT_R     = 24;
@@ -365,6 +441,22 @@
       vy: Math.sin(en.heading) * BULLET_SPEED * 0.78,
       owner: 'enemy',
       life: BULLET_LIFE_MS,
+    });
+  }
+
+  // Bombs fall straight down with gravity, inheriting a small forward push
+  // from the hero's velocity so the drop arcs slightly in the direction of
+  // flight. Visually a plain black dot for now — will be replaced with a
+  // bespoke sprite.
+  function dropBomb(now) {
+    if (now - lastBombAt < BOMB_COOLDOWN) return;
+    lastBombAt = now;
+    const sp = playerSpeed();
+    bombs.push({
+      x: player.x,
+      y: player.y + 14,
+      vx: Math.cos(player.heading) * sp * 0.6,    // partial forward inheritance
+      vy: Math.sin(player.heading) * sp * 0.6 + 0.05,
     });
   }
 
@@ -514,6 +606,51 @@
       lastShotAt = now;
       heat += HEAT_PER_SHOT;
       if (heat >= 1) { heat = 1; overheated = true; }
+    }
+
+    // ----- Bomb (B key on desktop / double-tap on mobile) -----
+    if (bombRequest) {
+      dropBomb(now);
+      bombRequest = false;
+    }
+
+    // ----- Bombs (gravity + ground/vehicle collision) -----
+    for (let i = bombs.length - 1; i >= 0; i--) {
+      const b = bombs[i];
+      b.vy += BOMB_GRAVITY * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      // Tank hit?
+      let hit = false;
+      for (const t of tanks) {
+        if (!t.alive) continue;
+        const top = ROAD_BOTTOM_Y - t.h;
+        if (b.x >= t.x - t.w / 2 && b.x <= t.x + t.w / 2 && b.y >= top) {
+          t.alive = false;
+          spawnExplosion(b.x, top + t.h * 0.4, true);
+          hit = true; break;
+        }
+      }
+      // Truck hit?
+      if (!hit) {
+        for (const k of trucks) {
+          if (!k.alive) continue;
+          const top = ROAD_BOTTOM_Y - k.h;
+          if (b.x >= k.x - k.w / 2 && b.x <= k.x + k.w / 2 && b.y >= top) {
+            k.alive = false;
+            spawnExplosion(b.x, top + k.h * 0.4, true);
+            hit = true; break;
+          }
+        }
+      }
+      // Ground impact (street top) — small explosion, no target.
+      if (!hit && b.y >= ROAD_BOTTOM_Y) {
+        spawnExplosion(b.x, ROAD_BOTTOM_Y - 4, false);
+        hit = true;
+      }
+      // Out of world?
+      if (!hit && (b.x < -50 || b.x > STAGE_W + 50)) hit = true;
+      if (hit) bombs.splice(i, 1);
     }
 
     // ----- Enemies (chase + fire) -----
@@ -801,17 +938,20 @@
     const img = assets.street;
     const tileH = STREET_H;
     const tileW = tileH * (img.width / img.height);
-    // The cobblestones converge to a vanishing point that sits to the RIGHT
-    // of the source PNG's geometric centre (the brightness peak ≈ 0.51 of
-    // the source width, but the optical perspective centre is further along).
-    // Anchor so this fraction of the source lines up with canvas X = W/2.
+    // Subtle ground-parallax: the street shifts a small fraction of the
+    // camera's X movement so the road reads as moving with the world without
+    // sliding fast enough to compete with the apartment strip behind it.
+    const STREET_PARALLAX = 0.15;
     const PERSPECTIVE_FRAC = 0.62;
-    const startX = Math.round(W / 2 - PERSPECTIVE_FRAC * tileW);
+    const baseStartX = W / 2 - PERSPECTIVE_FRAC * tileW;
+    // Mod by tileW so the scroll offset stays in [-tileW, 0].
+    const scroll = ((cameraX * STREET_PARALLAX) % tileW);
+    const startX = Math.round(baseStartX - scroll);
     ctx.drawImage(img, startX, streetScreenY, tileW + 1, tileH);
     for (let x = startX + tileW; x < W; x += tileW) {
       ctx.drawImage(img, x, streetScreenY, tileW + 1, tileH);
     }
-    for (let x = startX - tileW; x > -tileW; x -= tileW) {
+    for (let x = startX - tileW; x > -tileW * 2; x -= tileW) {
       ctx.drawImage(img, x, streetScreenY, tileW + 1, tileH);
     }
   }
@@ -993,6 +1133,21 @@
     }
   }
 
+  function drawBombs() {
+    // Plain black dot for now — will be replaced with a bespoke sprite.
+    for (const b of bombs) {
+      const sx = worldToScreenX(b.x);
+      const sy = worldToScreenY(b.y);
+      if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+      ctx.save();
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(sx, sy, BOMB_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawParticles() {
     for (const p of particles) {
       const t = Math.max(0, p.life / p.life0);
@@ -1152,6 +1307,7 @@
     drawEnemies();
     drawPlayer(now);
     drawBullets();
+    drawBombs();
     drawParticles();
     ctx.restore();
     drawHUD();
