@@ -1,0 +1,58 @@
+/* ============================================================
+   Lacerta · game-specific styles only.
+   Page chrome, palette tokens, splash mechanics, focus mode all
+   come from /shared/tokens.css + chrome.css. The canvas is 16:9
+   landscape (1280×720) — chrome.css's auto-focus formula scales
+   it to fit the viewport while preserving aspect.
+   ============================================================ */
+
+/* Rotate-device prompt — shown only when the body has .portrait-lock
+   (set by play.js when innerHeight > innerWidth on a coarse-pointer device).
+   Sits above everything; the canvas + chrome stay below. */
+.rotate-prompt {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  background: var(--bg);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px 32px;
+  color: var(--text);
+}
+.rotate-prompt h2 {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  margin: 28px 0 8px;
+}
+.rotate-prompt p {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-dim);
+  margin: 0;
+}
+.rotate-icon {
+  color: var(--accent);
+  animation: rotate-hint 2.6s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes rotate-hint {
+  0%   { transform: rotate(0deg);   }
+  40%  { transform: rotate(-90deg); }
+  60%  { transform: rotate(-90deg); }
+  100% { transform: rotate(0deg);   }
+}
+body.portrait-lock .rotate-prompt { display: flex; }
+
+/* Ad slot placeholders. They're display:none in chrome.css by default;
+   Lacerta opts them in (still empty visually until AdSense fills them). */
+.ad-slot { display: grid; max-width: 728px; margin: 12px auto; min-height: 90px; }
+.ad-slot:empty::before {
+  content: 'Ad slot · 728 × 90';
+  font: 700 11px Inter, sans-serif;
+  letter-spacing: 1.4px;
+  color: var(--text-mute);
+}

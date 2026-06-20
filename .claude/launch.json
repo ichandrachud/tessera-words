@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "zamborin",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5230", "--directory", "/tmp/zamborin-preview"],
+      "port": 5230
+    }
+  ]
+}

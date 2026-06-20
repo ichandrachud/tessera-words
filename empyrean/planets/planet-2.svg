@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" viewBox="0 0 116 116">
+  <!-- Generator: Adobe Illustrator 30.5.1, SVG Export Plug-In . SVG Version: 2.1.4 Build 3)  -->
+  <defs>
+    <style>
+      .st0, .st1, .st2, .st3 {
+        fill: none;
+      }
+
+      .st4 {
+        fill: url(#radial-gradient);
+      }
+
+      .st1 {
+        stroke: #e6c878;
+      }
+
+      .st1, .st2 {
+        stroke-width: 5px;
+      }
+
+      .st2, .st3 {
+        stroke: #caa050;
+      }
+
+      .st3 {
+        stroke-width: 6px;
+      }
+
+      .st5 {
+        opacity: .5;
+      }
+
+      .st6 {
+        fill: url(#radial-gradient1);
+      }
+
+      .st7 {
+        fill: url(#radial-gradient3);
+      }
+
+      .st8 {
+        fill: url(#radial-gradient2);
+      }
+
+      .st9 {
+        fill: url(#radial-gradient4);
+      }
+
+      .st10 {
+        clip-path: url(#clippath);
+      }
+    </style>
+    <radialGradient id="radial-gradient" cx="83.23" cy="556.15" fx="83.23" fy="556.15" r=".5" gradientTransform="translate(-9596.7514 64571.9401) scale(116 -116)" gradientUnits="userSpaceOnUse">
+      <stop offset=".8" stop-color="#ffb56a" stop-opacity="0"/>
+      <stop offset=".93" stop-color="#ffb56a" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#ffb56a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="radial-gradient1" cx="82.11" cy="555.81" fx="82.11" fy="555.81" r=".7" gradientTransform="translate(-8491.5773 57849.7411) scale(104 -104)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff2cf"/>
+      <stop offset=".55" stop-color="#e6b86a"/>
+      <stop offset="1" stop-color="#8a5a1f"/>
+    </radialGradient>
+    <clipPath id="clippath">
+      <circle class="st0" cx="58" cy="58" r="52"/>
+    </clipPath>
+    <radialGradient id="radial-gradient2" cx="82.06" cy="555.87" fx="82.06" fy="555.87" r=".75" gradientTransform="translate(-8491.5773 57849.7411) scale(104 -104)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".55"/>
+      <stop offset=".35" stop-color="#fff" stop-opacity=".12"/>
+      <stop offset=".62" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".78"/>
+    </radialGradient>
+    <radialGradient id="radial-gradient3" cx="82.05" cy="555.87" fx="82.05" fy="555.87" r=".78" gradientTransform="translate(-8491.5773 57849.7411) scale(104 -104)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000" stop-opacity="0"/>
+      <stop offset=".55" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".62"/>
+    </radialGradient>
+    <radialGradient id="radial-gradient4" cx="82.21" cy="555.69" fx="82.21" fy="555.69" r=".5" gradientTransform="translate(-8491.5773 57849.7411) scale(104 -104)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset=".86" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".4"/>
+    </radialGradient>
+  </defs>
+  <circle class="st4" cx="58" cy="58" r="58"/>
+  <circle class="st6" cx="58" cy="58" r="52"/>
+  <g class="st10">
+    <g class="st5">
+      <path class="st3" d="M18,38c26.67-4,53.33-3.33,80,2"/>
+      <path class="st1" d="M18,60c26.67,5.33,53.33,4.67,80-2"/>
+      <path class="st2" d="M18,80c26.67-2.67,53.33-1.33,80,4"/>
+    </g>
+  </g>
+  <circle class="st8" cx="58" cy="58" r="52"/>
+  <circle class="st7" cx="58" cy="58" r="52"/>
+  <circle class="st9" cx="58" cy="58" r="52"/>
+</svg>

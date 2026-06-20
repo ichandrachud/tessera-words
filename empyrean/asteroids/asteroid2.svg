@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" viewBox="0 0 450.78 222.6">
+  <!-- Generator: Adobe Illustrator 30.5.1, SVG Export Plug-In . SVG Version: 2.1.4 Build 3)  -->
+  <defs>
+    <style>
+      .st0 {
+        opacity: .28;
+      }
+
+      .st0, .st1, .st2 {
+        isolation: isolate;
+      }
+
+      .st3 {
+        fill: url(#linear-gradient1);
+      }
+
+      .st4 {
+        fill: #443c34;
+      }
+
+      .st5 {
+        fill: url(#linear-gradient);
+      }
+
+      .st6 {
+        fill: #665d52;
+      }
+
+      .st7 {
+        fill: #332e28;
+      }
+
+      .st1 {
+        opacity: .5;
+      }
+
+      .st1, .st2 {
+        fill: #8a8072;
+      }
+
+      .st2 {
+        opacity: .55;
+      }
+    </style>
+    <linearGradient id="linear-gradient" x1="636.47" y1="614.48" x2="637.17" y2="613.63" gradientTransform="translate(-276221.775 85518.4009) scale(434.087 -139.1304)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".5"/>
+      <stop offset=".55" stop-color="#fff" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="linear-gradient1" x1="3.35" y1="205.65" x2="51.01" y2="113.65" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".5"/>
+      <stop offset=".41" stop-color="#fff" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".55"/>
+    </linearGradient>
+  </defs>
+  <polygon class="st6" points="450.78 122.43 448.99 154.63 408.71 222.6 183.65 222.6 61.21 189.21 0 139.13 16.69 89.04 128 16.69 267.13 0 384 38.95 450.78 122.43"/>
+  <polygon class="st0" points="450.78 122.43 448.99 154.63 408.71 222.6 183.65 222.6 61.21 189.21 0 139.13 16.69 89.04 128 16.69 267.13 0 384 38.95 450.78 122.43"/>
+  <polyline class="st5" points="16.69 89.04 128 16.7 267.13 0 384 38.96 450.78 122.43 361.73 139.13 250.43 116.87 139.13 139.13 50.08 133.57 16.69 89.04"/>
+  <polygon class="st4" points="116.86 72.35 189.21 50.09 239.3 77.91 228.17 128 166.95 150.26 111.3 122.43 100.17 89.04 116.86 72.35"/>
+  <polygon class="st2" points="116.86 72.35 189.21 50.09 239.3 77.91 205.91 89.04 150.26 94.61 108.52 100.17 116.86 72.35"/>
+  <polygon class="st4" points="283.82 77.91 339.47 66.78 372.86 100.17 350.6 139.13 294.95 144.7 267.13 105.74 283.82 77.91"/>
+  <polygon class="st1" points="283.82 77.91 339.47 66.78 372.86 100.17 333.91 105.74 294.95 105.74 283.82 77.91"/>
+  <polygon class="st7" points="322.78 155.83 367.3 144.7 384 178.09 350.6 194.78 317.21 178.09 322.78 155.83"/>
+  <polygon class="st3" points="0 139.13 16.69 89.04 50.08 133.57 59.66 187.8 0 139.13"/>
+</svg>
