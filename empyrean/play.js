@@ -22,8 +22,16 @@
   const W = 1280;
   const H = 720;
   const STAGE_W = W * 6;            // 7680 px — full arena width
-  document.body.style.setProperty('--canvas-w', W + 'px');
-  document.body.style.setProperty('--canvas-h', H + 'px');
+  // Canvas display size — fits within the shared .page container (max-width
+  // 1100 px). The LOGICAL coordinate system stays 1280 × 720; resizeCanvas
+  // applies a uniform scale so the content fills the smaller display rect.
+  // Without this, the 1280-wide canvas overflowed the 1100-wide page and
+  // got clipped on the right, making the title-screen content read as
+  // shifted right.
+  const CANVAS_DISP_W = 1024;
+  const CANVAS_DISP_H = Math.round(CANVAS_DISP_W * H / W);   // 576, preserves 16:9
+  document.body.style.setProperty('--canvas-w', CANVAS_DISP_W + 'px');
+  document.body.style.setProperty('--canvas-h', CANVAS_DISP_H + 'px');
 
   const canvas = document.getElementById('game');
   const ctx    = canvas.getContext('2d');
@@ -1788,6 +1796,7 @@
     drawStreet();
     drawApartments();
     drawMilitaryBodies();
+
 
     const cx = W / 2;
     ctx.textAlign = 'center';
