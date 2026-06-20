@@ -475,7 +475,11 @@
       img,
       x: W + 80,
       y: 90 + Math.random() * (H - 220),
-      vx: -1.6 - Math.random() * 0.6,
+      // Closing speed is a MULTIPLE of the hero's world speed: 1.0 means the
+      // enemy is stationary in world space (drifts past with the ground);
+      // 2.0 means it's flying toward the hero at the hero's own speed, so the
+      // closing rate equals 2× world speed. Each enemy gets slight variation.
+      closingMul: 1.9 + Math.random() * 0.4,
       vy: (Math.random() - 0.5) * 0.4,
       hp: 3,
       fireAt: now + 700 + Math.random() * 800,
@@ -602,7 +606,9 @@
     }
     for (let i = enemies.length - 1; i >= 0; i--) {
       const en = enemies[i];
-      en.x += en.vx * (dt / 16);
+      // Closing speed = closingMul × hero world speed, scaled by throttle so
+      // throttling up speeds the engagement and throttling down stretches it.
+      en.x -= BASE_SPEED * player.throttle * en.closingMul * dt;
       en.y += en.vy * (dt / 16);
       // Gentle sinusoidal weave so they don't fly arrow-straight.
       en.vy += (Math.random() - 0.5) * 0.04;
