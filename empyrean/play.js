@@ -417,19 +417,16 @@
     x: 220,
     y: H * 0.52,            // mid-height — keeps cameraY at 0 so the full road shows on spawn
     heading: 0,                 // facing right
-    throttle: 0.65,
+    throttle: 0,                  // default = no throttle → cruise at MIN_SPEED; → adds up to +30 %
     hp: 100,
     invulnUntil: 0,
     alive: true,
   };
-  // Hero speed band — cruise (at default throttle 0.65) is +15 % from the
-  // previous tuning, and throttle range gives ±~15 % around that cruise.
-  // Solving for MIN, MAX given default-throttle = old_cruise × 1.15 and
-  // full-throttle = new_cruise × 1.15:
-  const MIN_SPEED   = 0.046;    // px / ms at throttle 0
-  const MAX_SPEED   = 0.073;    // px / ms at throttle 1 (+15 % above cruise)
-  // Enemy planes get +10 % overall vs. the previous tuning. Lower range
-  // here so enemies at cruise throttle 0.32-0.50 don't outrun the hero.
+  // Hero speed band — MIN_SPEED is the default cruise (throttle = 0).
+  // Pressing → throttles up; full throttle is +30 % above default.
+  const MIN_SPEED   = 0.082;    // px / ms — default cruise speed
+  const MAX_SPEED   = 0.107;    // px / ms — full throttle (+30 % above MIN)
+  // Enemy planes use their own band — they don't track player throttle.
   const ENEMY_MIN_SPEED = 0.0264;
   const ENEMY_MAX_SPEED = 0.0792;
   const TURN_RATE   = 2.4;      // rad / sec — how fast the nose rotates
