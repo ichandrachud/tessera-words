@@ -890,10 +890,11 @@
     if (gameOver) return;
 
     // ----- Player flight -----
-    if (keys.ArrowLeft)  player.heading -= TURN_RATE * (dt / 1000);
-    if (keys.ArrowRight) player.heading += TURN_RATE * (dt / 1000);
-    if (keys.ArrowUp)    player.throttle = Math.min(1, player.throttle + THROTTLE_RATE * dt / 1000);
-    if (keys.ArrowDown)  player.throttle = Math.max(0, player.throttle - THROTTLE_RATE * dt / 1000);
+    // ↑ / ↓ steer (rotate the nose) ; ← / → adjust speed (throttle)
+    if (keys.ArrowUp)    player.heading -= TURN_RATE * (dt / 1000);
+    if (keys.ArrowDown)  player.heading += TURN_RATE * (dt / 1000);
+    if (keys.ArrowRight) player.throttle = Math.min(1, player.throttle + THROTTLE_RATE * dt / 1000);
+    if (keys.ArrowLeft)  player.throttle = Math.max(0, player.throttle - THROTTLE_RATE * dt / 1000);
     player.heading = normalizeAngle(player.heading);
 
     const sp = playerSpeed();
@@ -1887,18 +1888,14 @@
     const SKY_TOP    = 20;
     const SKY_BOTTOM = STREET_TOP_Y - APARTMENT_RENDER_H - 20;
     const skyCenterY = (SKY_TOP + SKY_BOTTOM) / 2;
-    const arrowRowGap = 60;                       // ↑/↓ to mid-row distance
-    const actionRowGap = 64;                      // mid-row → action row
-    const startPromptGap = 150;                   // mid-row → press-space prompt
-    // Composition spans from (↑ top edge) to (press-space text baseline):
-    //   topY    = midY − arrowRowGap − KEY_H/2
-    //   bottomY = midY + startPromptGap + text height/2 (≈ 12)
-    // Centring the midpoint of [topY, bottomY] on skyCenterY:
-    const compTopOffset    = arrowRowGap + KEY_H / 2;
-    const compBottomOffset = startPromptGap + 12;
-    const midY  = skyCenterY - (compBottomOffset - compTopOffset) / 2;
-    const upY   = midY - arrowRowGap;
-    const downY = midY + arrowRowGap;
+    // Composition is now three centred rows:
+    //   midY        — top row (Steer / Adjust speed inline)
+    //   midY + 80   — action row (Space / B / M)
+    //   midY + 150  — press-space prompt
+    // Top of composition: midY − KEY_H/2 ; bottom: midY + 150 + ~12 px text.
+    // Centre on skyCenterY:
+    const compHeight = (150 + 12) + KEY_H / 2;
+    const midY = Math.round(skyCenterY - compHeight / 2 + KEY_H / 2);
 
     // Helper: lay out a row of segments (mix of keys, text labels, gaps)
     // CENTRED horizontally on the canvas. Returns useful X anchors for
@@ -1926,27 +1923,24 @@
       return anchors;
     }
 
-    // D-pad cross — every key anchored to canvas centre cx. ← / → flank
-    // cx by half the arrow-gap; ↑ / ↓ sit directly on cx above + below.
-    const arrowW = measureKey('↑', keyFont);
-    const ARROW_GAP = Math.max(arrowW + 12, 60);
-    const leftX  = Math.round(cx - ARROW_GAP / 2 - arrowW);
-    const rightX = Math.round(cx + ARROW_GAP / 2);
-    drawKey('←', leftX,  midY, keyFont);
-    drawKey('→', rightX, midY, keyFont);
-    drawKey('↑', cx - arrowW / 2, upY,   keyFont);
-    drawKey('↓', cx - arrowW / 2, downY, keyFont);
-    // 'Use keys to move' caption directly UNDER the ↓ key, centred on cx —
-    // keeps the d-pad row visually symmetric instead of leaning left.
-    ctx.font = textFont;
-    ctx.fillStyle = LABEL_COLOR;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('Use keys to move', cx, downY + 36);
+    // Row 1 — single line: 'Steer using [↑] [↓]   Adjust speed with [←] [→]'
+    // All centred horizontally on the canvas. ↑ / ↓ steer (rotate the nose),
+    // ← / → adjust throttle.
+    layoutCenteredRow([
+      { kind: 'text', value: 'Steer using' },
+      { kind: 'gap',  value: 14 },
+      { kind: 'key',  value: '↑' },
+      { kind: 'gap',  value: 10 },
+      { kind: 'key',  value: '↓' },
+      { kind: 'gap',  value: 42 },
+      { kind: 'text', value: 'Adjust speed with' },
+      { kind: 'gap',  value: 14 },
+      { kind: 'key',  value: '←' },
+      { kind: 'gap',  value: 10 },
+      { kind: 'key',  value: '→' },
+    ], midY);
 
     // Row 2 — actions: Space / B / M each followed by their label, centred.
-    // Pushed a bit lower so the 'Use keys to move' caption (at downY + 36)
-    // has clear breathing space above the action row.
     layoutCenteredRow([
       { kind: 'key',  value: 'Space' },
       { kind: 'gap',  value: 10 },
@@ -1959,7 +1953,7 @@
       { kind: 'key',  value: 'M' },
       { kind: 'gap',  value: 10 },
       { kind: 'text', value: 'mute' },
-    ], downY + 88);
+    ], midY + 80);
 
     // ----- Start prompt (slow, gentle fade) -----
     // 6.3-second full cycle (sin period 2π / 0.001) → fade in / out lasts
@@ -1971,7 +1965,7 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const isMobileStart = MODE === 'mobile';
-    ctx.fillText(isMobileStart ? 'tap to start' : 'press space to start', cx, downY + 150);
+    ctx.fillText(isMobileStart ? 'tap to start' : 'press space to start', cx, midY + 150);
 
   }
 
