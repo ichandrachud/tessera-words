@@ -1,18 +1,14 @@
 /* ============================================================
    Lacerta · a Zamborin Game
 
-   PHASE 1 — engine bring-up.
-   Side-scrolling 16:9 canvas with a three-layer parallax starfield
-   (skybackground / far-stars / closer-stars), one player ship
-   (Tsunami) under keyboard control, and a rotate-device prompt
-   on portrait-mobile.
+   PHASE 4 — finite-stage dogfight.
+   A 6-screen-wide arena (7680 × 720). The hero flies freely in any
+   direction (climbs, dives, loops). Arrow keys rotate the nose and
+   set throttle; the plane always moves forward in its heading. Enemy
+   planes chase the hero and try to take it down before the hero
+   clears the target list (all apartments + all enemies destroyed).
 
-   No enemies, weapons, hazards, AI, audio, or HUD yet — those land
-   in phases 2-7.
-
-   Logical canvas: 1280×720. chrome.css's auto-focus formula scales
-   to fit any viewport (mobile landscape ends up ~693×390 etc.) but
-   the gameplay code always thinks in 1280×720 logical pixels.
+   Controls: ←/→ rotate, ↑ throttle up, ↓ throttle down, Space fire.
    ============================================================ */
 (() => {
   'use strict';
@@ -25,6 +21,7 @@
   // ---------- CANVAS DIMS (FIXED 16:9) ----------
   const W = 1280;
   const H = 720;
+  const STAGE_W = W * 6;            // 7680 px — full arena width
   document.body.style.setProperty('--canvas-w', W + 'px');
   document.body.style.setProperty('--canvas-h', H + 'px');
 
@@ -48,8 +45,6 @@
   window.addEventListener('resize', resizeCanvas);
 
   // ---------- ROTATE LOCK (mobile portrait) ----------
-  // Lacerta is landscape-only on phones — show the rotate prompt + freeze
-  // gameplay when the device is held vertically.
   let landscapeLocked = false;
   function updateOrientation() {
     if (MODE !== 'mobile') {
@@ -66,8 +61,6 @@
   window.addEventListener('orientationchange', updateOrientation);
 
   // ---------- ASSETS ----------
-  // Background layers + the player ship for Phase 1. The rest of the roster
-  // (enemies, planets, asteroids, ombule) loads in later phases.
   function loadImage(src) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -81,79 +74,444 @@
     player: null, enemies: [],
     apartments: [], clouds: [],
   };
-  // Sky band stretched across the canvas.
   loadImage('./assets/sky/sky.jpg').then(img => { assets.sky = img; });
-  // Street strip — pinned to the bottom of the canvas, scrolls with the world
-  // at the ground parallax rate.
   loadImage('./assets/street/street.png').then(img => { assets.street = img; });
-  // Hero aircraft — HeroAircraft1 is the default. New PNG art points RIGHT
-  // by default (left = rear / right = front), so the player needs no flip.
   loadImage('./assets/planes-v2/HeroAircraft1.png').then(img => { assets.player = img; });
-  // Enemy pool — same new pack, faces RIGHT in source. We mirror at draw
-  // time so they fly LEFT toward the player from the right edge.
   Promise.all([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n =>
     loadImage(`./assets/planes-v2/enemy-aircraft${n}.png`)
-  )).then(imgs => { assets.enemies = imgs.filter(Boolean); });
-  // Apartment pool — flat-bottomed buildings that slide along the street.
+  )).then(imgs => { assets.enemies = imgs.filter(Boolean); buildStageIfReady(); });
   Promise.all([1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23].map(n =>
     loadImage(`./assets/apartments/apartment${n}.png`)
-  )).then(imgs => { assets.apartments = imgs.filter(Boolean); });
-  // Cloud pool — 6 transparent-background PNGs that drift across the sky.
+  )).then(imgs => { assets.apartments = imgs.filter(Boolean); buildStageIfReady(); });
   Promise.all([1, 3, 4, 5, 6, 12].map(id => loadImage(`./assets/clouds/cloud-${id}.png`)))
     .then(imgs => { assets.clouds = imgs.filter(Boolean); });
 
   // ---------- PALETTE ----------
-  const C = {
-    bg:     '#020611',   // ink-deep space (fallback while sky loads)
-    text:   '#FFFFFF',
-    accent: '#D8523F',
-  };
+  const C = { bg: '#020611', text: '#FFFFFF', accent: '#D8523F' };
+
+  // ---------- STAGE GEOMETRY ----------
+  const STREET_H        = 72;
+  const STREET_TOP_Y    = H - STREET_H;
+  const APARTMENT_RENDER_H = 192;
+  // Player + enemies are confined to this Y range — never below the apartment
+  // tops (no clipping through buildings) and never quite off the top.
+  const FLIGHT_Y_MIN = 50;
+  const FLIGHT_Y_MAX = STREET_TOP_Y - APARTMENT_RENDER_H - 10;   // ~376
 
   // ---------- PLAYER STATE ----------
-  // The player ship sits at a FIXED screen X; the world scrolls under it.
-  // Pitch is its vertical velocity input (−1 up, +1 down, with momentum).
-  // Throttle controls world scroll speed.
+  // Free 2-D flight: world position (x, y), nose heading in radians (0 = right,
+  // -π/2 = up, +π/2 = down), throttle 0..1. The plane always moves forward in
+  // its heading direction. Arrow keys rotate / adjust throttle.
   const player = {
-    screenX:    W * 0.12,      // anchored close to the left edge — maximum room for enemies coming in from the right
-    y:          H / 2,
-    vy:         0,
-    pitch:      0,              // visual bank angle (−1..+1)
-    pitchInput: 0,              // pulled from keyboard each frame
-    throttle:   1,              // 0.5 .. 1.8 — multiplier on base scroll
-    worldX:     0,              // cumulative world distance scrolled
+    x: 220,
+    y: H * 0.45,
+    heading: 0,                 // facing right
+    throttle: 0.65,
+    hp: 100,
+    invulnUntil: 0,
+    alive: true,
   };
-  // Physics constants tuned for a casual side-scroller — sharper than a
-  // sim, gentler than an arcade shoot-em-up.
-  const PITCH_ACCEL  = 0.0008;  // how fast the ship gains pitch input
-  const PITCH_DAMP   = 0.92;    // bleed-off when input is released
-  const VY_MAX       = 0.55;
-  const BANK_FACTOR  = 0.32;    // radians per unit pitch (subtle)
-  const BASE_SPEED   = 0.32;    // world units per ms at throttle 1.0
-  const THROTTLE_MIN = 0.55;
-  const THROTTLE_MAX = 1.75;
+  const MIN_SPEED   = 0.16;     // px / ms at throttle 0
+  const MAX_SPEED   = 0.48;     // px / ms at throttle 1
+  const TURN_RATE   = 2.4;      // rad / sec — how fast the nose rotates
+  const THROTTLE_RATE = 0.55;   // throttle units per second of held key
 
-  // Parallax speed multipliers — sky barely moves, far-stars slow, close-stars fast.
-  const PARALLAX = { sky: 0.04, far: 0.18, close: 0.55, ground: 0.85 };
+  function playerSpeed() {
+    return MIN_SPEED + (MAX_SPEED - MIN_SPEED) * player.throttle;
+  }
 
-  // ---------- STREET + APARTMENTS ----------
-  // Bottom strip is now an asset-based street pinned to the canvas bottom.
-  // Apartments slide along the top edge of the street — their flat bottoms
-  // sit flush on the kerb, so as the world scrolls they read as buildings
-  // gliding past on a fixed road.
-  const STREET_H        = 72;          // street strip height in logical px
-  const STREET_TOP_Y    = H - STREET_H;
-  const TERRAIN_BASE_Y  = STREET_TOP_Y; // bombs treat the street top as ground
-  const APARTMENT_RENDER_H = 192;       // 20 % smaller than the previous 240
+  // ---------- CAMERA ----------
+  // Camera centres on the hero in X, clamped to the stage bounds. Y stays 0
+  // because the stage height equals the canvas height.
+  let cameraX = 0;
+  function updateCamera() {
+    const target = player.x - W / 2;
+    cameraX = Math.max(0, Math.min(STAGE_W - W, target));
+  }
+  function worldToScreenX(wx) { return wx - cameraX; }
 
-  // Constant ground height — bombs and station-impact effects still query
-  // this so they share one source of truth.
-  function terrainHeightAt(_worldX) { return TERRAIN_BASE_Y; }
+  // ---------- STAGE LAYOUT ----------
+  // Deterministic placement: a row of apartments edge-to-edge across the
+  // stage, and a fixed roster of enemy aircraft sleeping at their start
+  // positions until the hero comes within wake range.
+  const apartments = [];   // { x (centre), w, h, alive, img }
+  const enemies    = [];   // { x, y, heading, throttle, hp, alive, img, fireAt, awake }
+  let stageBuilt = false;
+  function buildStageIfReady() {
+    if (stageBuilt) return;
+    if (!assets.apartments.length || !assets.enemies.length) return;
+    stageBuilt = true;
 
-  // Street strip — the source PNG is one long band. We pin it STATIC at the
-  // bottom of the canvas (no scroll), so its perspective stays fixed while
-  // the apartments slide across the top edge. A scrolling road would compete
-  // with the apartment motion and read as the camera tilting.
+    // --- Apartments (ground targets) — packed edge-to-edge across the stage.
+    let cursor = 180;
+    let lastImg = null;
+    while (cursor < STAGE_W - 180) {
+      const pool = assets.apartments;
+      let img;
+      do { img = pool[Math.floor(Math.random() * pool.length)]; }
+      while (pool.length > 1 && img === lastImg);
+      lastImg = img;
+      const h = APARTMENT_RENDER_H;
+      const w = h * (img.width / img.height);
+      apartments.push({ x: cursor + w / 2, w, h, alive: true, img, hp: 2 });
+      cursor += w;
+    }
+
+    // --- Enemy roster — 8 planes evenly distributed across the stage.
+    const N_ENEMIES = 8;
+    for (let i = 0; i < N_ENEMIES; i++) {
+      const pool = assets.enemies;
+      const img = pool[Math.floor(Math.random() * pool.length)];
+      const startX = 900 + (i + 0.5) * (STAGE_W - 1100) / N_ENEMIES;
+      const startY = FLIGHT_Y_MIN + 40 + Math.random() * (FLIGHT_Y_MAX - FLIGHT_Y_MIN - 80);
+      enemies.push({
+        x: startX, y: startY,
+        heading: Math.PI,             // start facing left (toward the hero)
+        throttle: 0.55,
+        hp: 3,
+        alive: true,
+        img,
+        fireAt: 0,
+        awake: false,
+      });
+    }
+  }
+
+  // ---------- INPUT (keys only) ----------
+  const keys = Object.create(null);
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+    keys[e.key] = true;
+  });
+  window.addEventListener('keyup', (e) => { keys[e.key] = false; });
+  window.addEventListener('blur', () => {
+    keys.ArrowLeft = keys.ArrowRight = keys.ArrowUp = keys.ArrowDown = keys[' '] = false;
+  });
+
+  // ---------- COMBAT ----------
+  const bullets   = [];   // { x, y, vx, vy, owner: 'player'|'enemy', life }
+  const particles = [];
+  let lastShotAt = 0;
+  let heat = 0;
+  let overheated = false;
+  const FIRE_INTERVAL    = 140;
+  const HEAT_PER_SHOT    = 0.07;
+  const HEAT_COOL_PER_MS = 0.0006;
+  const BULLET_SPEED     = 1.05;   // px / ms
+  const BULLET_LIFE_MS   = 1100;
+  const PLAYER_HIT_R     = 24;
+  const ENEMY_HIT_R      = 36;
+
+  function spawnPlayerBullet() {
+    // Muzzle at the plane's nose — translate forward in heading direction.
+    const muzzleDist = 26;
+    const mx = player.x + Math.cos(player.heading) * muzzleDist;
+    const my = player.y + Math.sin(player.heading) * muzzleDist;
+    bullets.push({
+      x: mx, y: my,
+      vx: Math.cos(player.heading) * BULLET_SPEED,
+      vy: Math.sin(player.heading) * BULLET_SPEED,
+      owner: 'player',
+      life: BULLET_LIFE_MS,
+    });
+  }
+  function spawnEnemyBullet(en) {
+    const muzzleDist = 24;
+    const mx = en.x + Math.cos(en.heading) * muzzleDist;
+    const my = en.y + Math.sin(en.heading) * muzzleDist;
+    bullets.push({
+      x: mx, y: my,
+      vx: Math.cos(en.heading) * BULLET_SPEED * 0.78,    // slightly slower than hero rounds
+      vy: Math.sin(en.heading) * BULLET_SPEED * 0.78,
+      owner: 'enemy',
+      life: BULLET_LIFE_MS,
+    });
+  }
+
+  // Explosions — same vocabulary as before: small spark cluster for non-lethal
+  // hits, plus flash + ring + smoke for full ship deaths.
+  let cameraShake = 0;
+  function spawnExplosion(x, y, big) {
+    const sparkColors = ['#FFE38A', '#FF9F33', '#FF5C2C', '#FFD23F', '#FFFFFF'];
+    const N = big ? 30 : 8;
+    for (let i = 0; i < N; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const sp  = (big ? 2.6 : 1.2) + Math.random() * (big ? 4.2 : 2.0);
+      const ttl = (big ? 720 : 380) + Math.random() * (big ? 480 : 220);
+      particles.push({
+        kind: 'spark', x, y,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+        life0: ttl, life: ttl,
+        r0: (big ? 4 : 2.5) + Math.random() * 3,
+        color: sparkColors[Math.floor(Math.random() * sparkColors.length)],
+      });
+    }
+    if (!big) return;
+    particles.push({ kind: 'flash', x, y, vx: 0, vy: 0, life0: 160, life: 160, r0: 64, color: '#FFFFFF' });
+    particles.push({ kind: 'ring',  x, y, vx: 0, vy: 0, life0: 540, life: 540, r0: 92, color: '#FFE38A' });
+    for (let i = 0; i < 7; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const sp  = 0.25 + Math.random() * 0.55;
+      particles.push({
+        kind: 'smoke', x, y,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 0.25,
+        life0: 1200 + Math.random() * 700, life: 1200 + Math.random() * 700,
+        r0: 9 + Math.random() * 6, color: 'rgba(80, 60, 55, 0.55)',
+      });
+    }
+    cameraShake = Math.max(cameraShake, 7);
+  }
+
+  // ---------- CLOUDS ----------
+  // Drift across the upper sky band; perspective scaling tied to Y (top of
+  // sky = nearest = largest / boldest, near horizon = farthest / faded).
+  // Position is in world coords so clouds drift over the stage with parallax.
+  const clouds = [];
+  let nextCloudAt = 0;
+  const MAX_CLOUDS = 8;
+  function spawnCloud(now) {
+    if (!assets.clouds.length) return;
+    const img = assets.clouds[Math.floor(Math.random() * assets.clouds.length)];
+    const skyTop = 24, skyBottom = Math.max(skyTop + 1, FLIGHT_Y_MIN + 80);
+    const y     = skyTop + Math.random() * (skyBottom - skyTop);
+    const depth = (y - skyTop) / (skyBottom - skyTop);
+    const targetH    = 130 - depth * 95;
+    const alpha      = 0.85 - depth * 0.65;
+    const parallax   = 0.32 - depth * 0.26;     // 0.32 near, 0.06 far
+    // World X: place clouds across the whole stage at spawn, then they drift
+    // with subtle parallax (their *apparent* position differs from cameraX).
+    const worldX = cameraX + W + 200 + Math.random() * 200;
+    clouds.push({ img, worldX, y, targetH, alpha, parallax, spawnedCamX: cameraX });
+  }
+  function updateClouds(now) {
+    if (now >= nextCloudAt && clouds.length < MAX_CLOUDS) {
+      spawnCloud(now);
+      nextCloudAt = now + (1800 + Math.random() * 2400);
+    }
+    for (let i = clouds.length - 1; i >= 0; i--) {
+      const c = clouds[i];
+      const sx = c.worldX - (cameraX - c.spawnedCamX) * c.parallax - c.spawnedCamX;
+      if (sx < -400) clouds.splice(i, 1);
+    }
+  }
+
+  // ---------- WIN / LOSE ----------
+  let gameOver = false;
+  let win = false;
+  function targetsRemaining() {
+    let n = 0;
+    for (const a of apartments) if (a.alive) n++;
+    for (const e of enemies)   if (e.alive) n++;
+    return n;
+  }
+
+  // ---------- HELPERS ----------
+  function normalizeAngle(a) {
+    while (a >  Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+
+  // ---------- UPDATE ----------
+  function update(dt, now) {
+    if (landscapeLocked || gameOver) return;
+
+    // ----- Player flight -----
+    if (keys.ArrowLeft)  player.heading -= TURN_RATE * (dt / 1000);
+    if (keys.ArrowRight) player.heading += TURN_RATE * (dt / 1000);
+    if (keys.ArrowUp)    player.throttle = Math.min(1, player.throttle + THROTTLE_RATE * dt / 1000);
+    if (keys.ArrowDown)  player.throttle = Math.max(0, player.throttle - THROTTLE_RATE * dt / 1000);
+    player.heading = normalizeAngle(player.heading);
+
+    const sp = playerSpeed();
+    player.x += Math.cos(player.heading) * sp * dt;
+    player.y += Math.sin(player.heading) * sp * dt;
+
+    // Stage bounds — soft clamp + lose energy on hit (no instant death yet).
+    if (player.x < 30)               { player.x = 30;               player.heading = 0; }
+    if (player.x > STAGE_W - 30)     { player.x = STAGE_W - 30;     player.heading = Math.PI; }
+    if (player.y < FLIGHT_Y_MIN)     { player.y = FLIGHT_Y_MIN; }
+    if (player.y > FLIGHT_Y_MAX)     { player.y = FLIGHT_Y_MAX; }
+
+    updateCamera();
+    updateClouds(now);
+
+    // ----- Fire (Space) -----
+    heat = Math.max(0, heat - HEAT_COOL_PER_MS * dt);
+    if (overheated && heat < 0.30) overheated = false;
+    if (keys[' '] && !overheated && (now - lastShotAt) >= FIRE_INTERVAL) {
+      spawnPlayerBullet();
+      lastShotAt = now;
+      heat += HEAT_PER_SHOT;
+      if (heat >= 1) { heat = 1; overheated = true; }
+    }
+
+    // ----- Enemies (chase + fire) -----
+    const WAKE_RANGE_X = 1.5 * W;          // start chasing when hero is within 1.5 screens
+    const FIRE_RANGE   = 520;
+    const ALIGN_RAD    = 0.18;             // ~10° heading alignment to fire
+    const ENEMY_TURN_RATE = 1.6;           // rad / sec — bit slower than hero so player can outturn
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      const en = enemies[i];
+      if (!en.alive) continue;
+
+      // Wake up when hero is in range, then chase indefinitely.
+      const dx0 = player.x - en.x, dy0 = player.y - en.y;
+      const dist = Math.hypot(dx0, dy0);
+      if (!en.awake && Math.abs(dx0) < WAKE_RANGE_X) en.awake = true;
+      if (!en.awake) continue;
+
+      // Steer toward the hero (limited turn rate).
+      const desired = Math.atan2(dy0, dx0);
+      const diff = normalizeAngle(desired - en.heading);
+      const maxTurn = ENEMY_TURN_RATE * (dt / 1000);
+      en.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
+      en.heading = normalizeAngle(en.heading);
+
+      // Throttle: cruise speed; close in faster when far away.
+      const targetThrottle = dist > 600 ? 0.85 : 0.55;
+      en.throttle += (targetThrottle - en.throttle) * (dt / 600);
+
+      const enSp = MIN_SPEED + (MAX_SPEED - MIN_SPEED) * en.throttle;
+      en.x += Math.cos(en.heading) * enSp * dt;
+      en.y += Math.sin(en.heading) * enSp * dt;
+
+      // Keep enemies inside the sky band too — they bounce off the apartment
+      // roofline and the top edge.
+      if (en.y < FLIGHT_Y_MIN) { en.y = FLIGHT_Y_MIN; en.heading = -en.heading; }
+      if (en.y > FLIGHT_Y_MAX) { en.y = FLIGHT_Y_MAX; en.heading = -en.heading; }
+      if (en.x < 30)            { en.x = 30;            en.heading = 0; }
+      if (en.x > STAGE_W - 30)  { en.x = STAGE_W - 30;  en.heading = Math.PI; }
+
+      // Fire when nose is on target and within range.
+      if (Math.abs(diff) < ALIGN_RAD && dist < FIRE_RANGE && now >= en.fireAt) {
+        spawnEnemyBullet(en);
+        en.fireAt = now + 900 + Math.random() * 700;
+      }
+    }
+
+    // ----- Bullets -----
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.life -= dt;
+      if (b.life <= 0 || b.x < -50 || b.x > STAGE_W + 50 || b.y < -50 || b.y > H + 50) {
+        bullets.splice(i, 1);
+      }
+    }
+
+    // ----- Collisions: player bullets vs enemies + apartments -----
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      if (b.owner !== 'player') continue;
+      let consumed = false;
+
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const en = enemies[j];
+        if (!en.alive) continue;
+        const dx = b.x - en.x, dy = b.y - en.y;
+        if (dx * dx + dy * dy < ENEMY_HIT_R * ENEMY_HIT_R) {
+          en.hp -= 1;
+          if (en.hp <= 0) { en.alive = false; spawnExplosion(en.x, en.y, true); }
+          else            { spawnExplosion(b.x, b.y, false); }
+          consumed = true;
+          break;
+        }
+      }
+      if (consumed) { bullets.splice(i, 1); continue; }
+
+      for (let j = apartments.length - 1; j >= 0; j--) {
+        const a = apartments[j];
+        if (!a.alive) continue;
+        const top = STREET_TOP_Y - a.h;
+        if (b.x >= a.x - a.w / 2 && b.x <= a.x + a.w / 2 && b.y >= top && b.y <= STREET_TOP_Y) {
+          a.hp -= 1;
+          if (a.hp <= 0) { a.alive = false; spawnExplosion(b.x, top + a.h * 0.35, true); }
+          else           { spawnExplosion(b.x, b.y, false); }
+          consumed = true;
+          break;
+        }
+      }
+      if (consumed) { bullets.splice(i, 1); }
+    }
+
+    // ----- Collisions: enemy bullets vs player + enemy ships ramming player -----
+    if (now > player.invulnUntil) {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        if (b.owner !== 'enemy') continue;
+        const dx = b.x - player.x, dy = b.y - player.y;
+        if (dx * dx + dy * dy < PLAYER_HIT_R * PLAYER_HIT_R) {
+          bullets.splice(i, 1);
+          player.hp = Math.max(0, player.hp - 8);
+          spawnExplosion(b.x, b.y, false);
+          player.invulnUntil = now + 320;
+          break;
+        }
+      }
+      for (const en of enemies) {
+        if (!en.alive) continue;
+        const dx = en.x - player.x, dy = en.y - player.y;
+        const rr = (PLAYER_HIT_R + ENEMY_HIT_R) * 0.6;
+        if (dx * dx + dy * dy < rr * rr) {
+          spawnExplosion(en.x, en.y, true);
+          en.alive = false;
+          player.hp = Math.max(0, player.hp - 22);
+          player.invulnUntil = now + 500;
+        }
+      }
+    }
+    if (player.hp <= 0) { gameOver = true; win = false; spawnExplosion(player.x, player.y, true); }
+
+    // ----- Particles -----
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * (dt / 16);
+      p.y += p.vy * (dt / 16);
+      const damp = p.kind === 'smoke' ? 0.94 : (p.kind === 'spark' ? 0.97 : 1);
+      p.vx *= damp; p.vy *= damp;
+      p.life -= dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+    cameraShake *= Math.pow(0.85, dt / 16);
+    if (cameraShake < 0.05) cameraShake = 0;
+
+    // ----- Win check -----
+    if (stageBuilt && targetsRemaining() === 0) { gameOver = true; win = true; }
+  }
+
+  // ---------- RENDER ----------
+  function clearBg() {
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawSky() {
+    if (!assets.sky) return;
+    ctx.drawImage(assets.sky, 0, 0, W, H);
+  }
+
+  function drawClouds() {
+    const sorted = clouds.slice().sort((a, b) => a.y - b.y);
+    for (const c of sorted) {
+      const sx = c.worldX - cameraX * c.parallax;
+      const sxFinal = sx - (cameraX - c.spawnedCamX) * (1 - c.parallax);
+      const aspect = c.img.width / c.img.height;
+      const w = c.targetH * aspect;
+      // We simplified above — just place cloud at (worldX - cameraX*parallax).
+      const screenX = c.worldX - cameraX * c.parallax;
+      ctx.save();
+      ctx.globalAlpha = c.alpha;
+      ctx.drawImage(c.img, screenX - w / 2, c.y - c.targetH / 2, w, c.targetH);
+      ctx.restore();
+    }
+  }
+
   function drawStreet() {
+    // Street is PINNED to the bottom of the canvas and does NOT scroll —
+    // perspective stays fixed while the apartments slide across the top edge.
     if (!assets.street) {
       ctx.fillStyle = '#252028';
       ctx.fillRect(0, STREET_TOP_Y, W, STREET_H);
@@ -167,566 +525,21 @@
     }
   }
 
-  // Apartments live in WORLD-X space; they slide left as the world scrolls.
-  // They use a HALF-SPEED parallax (0.5 × ground rate) — the buildings read
-  // as a parallax mid-ground rather than rushing past at full speed.
-  //
-  // Placement is QUEUED, not timer-based: each new spawn lands flush against
-  // the right edge of the previous one, so the strip is continuous without
-  // either overlap or visible gaps. Variable widths come naturally from the
-  // image aspect ratios. Image picks avoid an immediate repeat so consecutive
-  // buildings always look different.
-  const APARTMENT_PARALLAX = PARALLAX.ground * 0.5;
-  const stations = [];  // { worldX (center), w, h, hp, alive, img }
-  let lastStationRightEdge = -Infinity;
-  let lastStationImg = null;
-  function spawnStation() {
-    const pool = assets.apartments;
-    if (!pool.length) return;
-    let img;
-    if (pool.length === 1) {
-      img = pool[0];
-    } else {
-      do { img = pool[Math.floor(Math.random() * pool.length)]; } while (img === lastStationImg);
-    }
-    lastStationImg = img;
-    const targetH = APARTMENT_RENDER_H;
-    const targetW = targetH * (img.width / img.height);
-    const cameraRightWorldX = player.worldX * APARTMENT_PARALLAX + W;
-    const leftWorldX = lastStationRightEdge === -Infinity
-      ? cameraRightWorldX + 40                                // seed first building just off-screen
-      : Math.max(lastStationRightEdge, cameraRightWorldX);    // never overlap; jump-forward if there was a gap
-    const worldX = leftWorldX + targetW / 2;
-    stations.push({ worldX, w: targetW, h: targetH, hp: 1, alive: true, img });
-    lastStationRightEdge = worldX + targetW / 2;
-  }
-  function updateStations() {
-    // Keep the queue extending at least 400 px past the visible edge so we
-    // never see a gap on the right as buildings scroll in.
-    const cameraRightWorldX = player.worldX * APARTMENT_PARALLAX + W;
-    let guard = 0;
-    while (lastStationRightEdge < cameraRightWorldX + 400 && guard++ < 12) spawnStation();
-    for (let i = stations.length - 1; i >= 0; i--) {
-      const s = stations[i];
-      const sx = stationScreenX(s);
-      if (sx + s.w / 2 < -10) stations.splice(i, 1);
-    }
-  }
-  function stationScreenX(s) {
-    return s.worldX - player.worldX * APARTMENT_PARALLAX;
-  }
-  function stationRect(s) {
-    const sx = stationScreenX(s);
-    const top = STREET_TOP_Y - s.h;
-    return { left: sx - s.w / 2, right: sx + s.w / 2, top, bottom: STREET_TOP_Y, w: s.w, h: s.h };
-  }
-  function drawStations() {
-    for (const s of stations) {
-      if (!s.alive || !s.img) continue;
-      const r = stationRect(s);
-      if (r.right < -10 || r.left > W + 10) continue;
-      ctx.drawImage(s.img, r.left, r.top, r.w, r.h);
+  function drawApartments() {
+    for (const a of apartments) {
+      if (!a.alive || !a.img) continue;
+      const sx = worldToScreenX(a.x);
+      if (sx + a.w / 2 < -10 || sx - a.w / 2 > W + 10) continue;
+      const top = STREET_TOP_Y - a.h;
+      ctx.drawImage(a.img, sx - a.w / 2, top, a.w, a.h);
     }
   }
 
-  // ---------- BOMBS ----------
-  const bombs = [];         // { x, y, vx, vy }
-  const BOMB_GRAVITY = 0.026;   // px / ms² applied to vy
-  let bombCount = 12;       // initial supply for the battleground
-  let lastBombAt = 0;
-  const BOMB_INTERVAL = 280;    // ms between bomb drops
-  function dropBomb(now) {
-    if (bombCount <= 0) return;
-    if (now - lastBombAt < BOMB_INTERVAL) return;
-    bombs.push({
-      x: player.screenX, y: player.y + 6,
-      // Bombs carry a small forward velocity from the ship.
-      vx: 2.0, vy: 0,
-    });
-    bombCount--;
-    lastBombAt = now;
-  }
-  function updateBombs(dt) {
-    for (let i = bombs.length - 1; i >= 0; i--) {
-      const b = bombs[i];
-      b.vy += BOMB_GRAVITY * dt;
-      b.x  += b.vx * (dt / 16);
-      b.y  += b.vy * (dt / 16);
-      // World scroll pushes the bomb leftward too — same parallax as ground.
-      b.x  -= BASE_SPEED * player.throttle * dt * PARALLAX.ground / 16;
-
-      // Apartment collision — bombs detonate ON contact with a building.
-      let exploded = false;
-      for (const s of stations) {
-        if (!s.alive || !s.img) continue;
-        const r = stationRect(s);
-        if (b.x >= r.left && b.x <= r.right && b.y >= r.top) {
-          bombExplode(b.x, Math.max(b.y, r.top + 24));
-          bombs.splice(i, 1);
-          exploded = true;
-          break;
-        }
-      }
-      if (exploded) continue;
-
-      // Fallback: bomb reached the street between buildings.
-      if (b.y >= STREET_TOP_Y) {
-        bombExplode(b.x, STREET_TOP_Y);
-        bombs.splice(i, 1);
-        continue;
-      }
-      // Off-screen left/right despawn.
-      if (b.x < -30 || b.x > W + 80) bombs.splice(i, 1);
-    }
-  }
-  function bombExplode(x, y) {
-    spawnExplosion(x, y, true);   // big drama
-    // Kill any station within ~50px of the impact point.
-    for (let i = stations.length - 1; i >= 0; i--) {
-      const s = stations[i];
-      if (!s.alive) continue;
-      const sx = stationScreenX(s);
-      const sy = terrainHeightAt(s.worldX) - 12;
-      const dx = sx - x, dy = sy - y;
-      if (dx * dx + dy * dy < 50 * 50) {
-        s.alive = false;
-        stations.splice(i, 1);
-        spawnExplosion(sx, sy, true);
-      }
-    }
-  }
-  function drawBombs() {
-    for (const b of bombs) {
-      // Spinning bomb: stretched ellipse, dark with a yellow tail.
-      ctx.save();
-      ctx.translate(b.x, b.y);
-      ctx.rotate(Math.atan2(b.vy, b.vx) + Math.PI / 2);
-      ctx.fillStyle = '#222';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 4, 8, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffd278';
-      ctx.beginPath();
-      ctx.ellipse(0, -8, 1.5, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  // ---------- AMBIENT CLOUD DRIFT ----------
-  // Clouds drift slowly across the upper half of the canvas at varied
-  // depth-speeds. Smaller/slower clouds read as far away; larger/faster
-  // ones feel close. Replaces the old planet drift now that we've moved
-  // from deep space to a daytime alien sky.
-  const clouds = [];           // active drifters
-  let nextCloudAt = 0;
-  function spawnCloud(now) {
-    if (!assets.clouds.length) return;
-    const img = assets.clouds[Math.floor(Math.random() * assets.clouds.length)];
-    // Perspective layout: top of the sky = nearest (large, solid, fast);
-    // closer to the horizon = farthest (small, faded, slow). Cloud Y is the
-    // master parameter — size / alpha / speed all derive from it.
-    const skyTop    = 24;
-    const skyBottom = Math.max(skyTop + 1, TERRAIN_BASE_Y - 140);    // never within the apartment band
-    const y         = skyTop + Math.random() * (skyBottom - skyTop);
-    const depth     = (y - skyTop) / (skyBottom - skyTop);            // 0 (near) .. 1 (far)
-    const targetH   = 130 - depth * 95;                               // ~130 near → 35 far
-    const alpha     = 0.85 - depth * 0.65;                            // 0.85 near → 0.20 far
-    const depthSpeed = 0.32 - depth * 0.26;                           // 0.32 near → 0.06 far
-    clouds.push({
-      img,
-      x: W + 300,
-      y, targetH, alpha, depthSpeed,
-      spawnedWorldX: player.worldX,
-    });
-  }
-  const MAX_CLOUDS = 6;
-  function updateClouds(now) {
-    if (now >= nextCloudAt && clouds.length < MAX_CLOUDS) {
-      spawnCloud(now);
-      nextCloudAt = now + (2200 + Math.random() * 3000);              // every 2.2..5.2s
-    }
-    for (let i = clouds.length - 1; i >= 0; i--) {
-      const c = clouds[i];
-      c.x = (W + 300) - (player.worldX - c.spawnedWorldX) * c.depthSpeed;
-      if (c.x < -400) clouds.splice(i, 1);
-    }
-  }
-  function drawClouds() {
-    // Sort by depth (far first) so nearer clouds overlap them — completes
-    // the depth illusion.
-    const sorted = clouds.slice().sort((a, b) => b.y - a.y === 0 ? 0 : a.y - b.y > 0 ? -1 : 1);
-    for (const c of sorted) {
-      const aspect = c.img.width / c.img.height;
-      const w = c.targetH * aspect;
-      ctx.save();
-      ctx.globalAlpha = c.alpha;
-      ctx.drawImage(c.img, c.x - w / 2, c.y - c.targetH / 2, w, c.targetH);
-      ctx.restore();
-    }
-  }
-
-  // ---------- INPUT (hybrid scheme: mouse for altitude, keys for throttle) ----------
-  // Mouse Y over the canvas → ship target altitude (smooth follow with lag).
-  // Left-click / touch → primary fire (forward gun, heat-managed).
-  // → ← arrow keys → throttle (faster / slower world scroll).
-  // Touch on mobile mirrors mouse for both follow + fire.
-  let mouseY = H / 2;
-  let mouseActive = false;          // true once the user moves the mouse over the canvas
-  let isFiring = false;
-  const keys = Object.create(null);
-
-  function canvasYFromClient(clientY) {
-    const rect = canvas.getBoundingClientRect();
-    return (clientY - rect.top) / rect.height * H;
-  }
-
-  canvas.addEventListener('mousemove', (e) => {
-    mouseY = canvasYFromClient(e.clientY);
-    mouseActive = true;
-  });
-  canvas.addEventListener('mouseenter', () => { mouseActive = true; });
-  canvas.addEventListener('mouseleave', () => { mouseActive = false; isFiring = false; });
-  canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 0) { isFiring = true; e.preventDefault(); }
-  });
-  canvas.addEventListener('mouseup', (e) => {
-    if (e.button === 0) isFiring = false;
-  });
-  // Touch support — single finger drives both Y and fire.
-  canvas.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    const t = e.touches[0]; if (!t) return;
-    mouseY = canvasYFromClient(t.clientY);
-    mouseActive = true;
-    isFiring = true;
-  }, { passive: false });
-  canvas.addEventListener('touchmove', (e) => {
-    e.preventDefault();
-    const t = e.touches[0]; if (!t) return;
-    mouseY = canvasYFromClient(t.clientY);
-  }, { passive: false });
-  canvas.addEventListener('touchend',    () => { isFiring = false; });
-  canvas.addEventListener('touchcancel', () => { isFiring = false; });
-  window.addEventListener('blur',        () => { isFiring = false; });
-
-  // Throttle keys still work.
-  window.addEventListener('keydown', (e) => {
-    if (['ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
-    keys[e.key] = true;
-    // Space drops bombs — the ground-attack weapon.
-    if (e.key === ' ') dropBomb(performance.now());
-  });
-  window.addEventListener('keyup', (e) => {
-    keys[e.key] = false;
-  });
-
-  function readThrottle() {
-    if (keys.ArrowRight) player.throttle = Math.min(THROTTLE_MAX, player.throttle + 0.012);
-    if (keys.ArrowLeft)  player.throttle = Math.max(THROTTLE_MIN, player.throttle - 0.012);
-  }
-
-  // ---------- COMBAT STATE ----------
-  // Bullets, enemies, explosion particles. Bullets are owned by either the
-  // player or an enemy; collision rules differ.
-  const bullets = [];     // { x, y, vx, vy, owner: 'player'|'enemy' }
-  const enemies = [];     // { x, y, vx, vy, hp, fireAt, kind, hueShift }
-  const particles = [];   // { x, y, vx, vy, life, life0, color }
-  let lastShotAt = 0;
-  let heat = 0;                       // 0..1 — overheats at 1, forced cool to 0.3
-  let overheated = false;
-  let nextEnemyAt = 0;
-  const FIRE_INTERVAL = 140;          // ms between player shots
-  const HEAT_PER_SHOT = 0.07;
-  const HEAT_COOL_PER_MS = 0.0006;
-  const MAX_BULLET_X = W + 100;
-  const PLAYER_HIT_R = 25;            // collision radius approximations
-  const ENEMY_HIT_R  = 42;            // larger now that enemies match player length
-
-  let playerHP = 100;
-  let playerInvulnUntil = 0;
-
-  function spawnPlayerBullet() {
-    bullets.push({
-      x: player.screenX + 30, y: player.y,
-      vx: 12, vy: 0,
-      owner: 'player',
-    });
-  }
-  function spawnEnemyBullet(en) {
-    // Aim from enemy toward the player's current position (lead = none for now).
-    const dx = player.screenX - en.x;
-    const dy = player.y       - en.y;
-    const d  = Math.max(1, Math.hypot(dx, dy));
-    const speed = 6.5;
-    bullets.push({
-      x: en.x - 26, y: en.y,
-      vx: dx / d * speed, vy: dy / d * speed,
-      owner: 'enemy',
-    });
-  }
-  function spawnEnemy(now) {
-    // Pool of enemy plane PNGs — each spawn picks one at random so the
-    // sky reads as a varied squadron rather than identical units.
-    const pool = assets.enemies;
-    const img = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    enemies.push({
-      kind: 'plane',
-      img,
-      x: W + 80,
-      y: 90 + Math.random() * (H - 220),
-      // Closing speed is a MULTIPLE of the hero's world speed: 1.0 means the
-      // enemy is stationary in world space (drifts past with the ground);
-      // 2.0 means it's flying toward the hero at the hero's own speed, so the
-      // closing rate equals 2× world speed. Each enemy gets slight variation.
-      closingMul: 1.33 + Math.random() * 0.28,    // 30 % slower than the previous 1.9..2.3
-      vy: (Math.random() - 0.5) * 0.4,
-      hp: 3,
-      fireAt: now + 700 + Math.random() * 800,
-    });
-  }
-  // Explosions come in two flavours:
-  //   • big=true  — full ship death: bright flash, expanding shock ring,
-  //                 28 fast hot sparks, slow drifting smoke.
-  //   • big=false — non-lethal bullet hit: small spark burst only.
-  function spawnExplosion(x, y, big) {
-    const sparkColors = ['#FFE38A', '#FF9F33', '#FF5C2C', '#FFD23F', '#FFFFFF'];
-    const N = big ? 30 : 8;
-    for (let i = 0; i < N; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const sp  = (big ? 2.6 : 1.2) + Math.random() * (big ? 4.2 : 2.0);
-      const ttl = (big ? 720 : 380) + Math.random() * (big ? 480 : 220);
-      particles.push({
-        kind:  'spark',
-        x, y,
-        vx: Math.cos(ang) * sp,
-        vy: Math.sin(ang) * sp,
-        life0: ttl, life: ttl,
-        r0: (big ? 4 : 2.5) + Math.random() * 3,
-        color: sparkColors[Math.floor(Math.random() * sparkColors.length)],
-      });
-    }
-    if (!big) return;
-
-    // Hot white flash — only the first 140ms; sells the initial pop.
-    particles.push({
-      kind: 'flash', x, y, vx: 0, vy: 0,
-      life0: 160, life: 160, r0: 64, color: '#FFFFFF',
-    });
-    // Expanding shock ring — grows over its lifetime, thins as it expands.
-    particles.push({
-      kind: 'ring', x, y, vx: 0, vy: 0,
-      life0: 540, life: 540, r0: 92, color: '#FFE38A',
-    });
-    // Slow smoke puffs — drift up and outward, fade over ~1.5s.
-    for (let i = 0; i < 7; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const sp  = 0.25 + Math.random() * 0.55;
-      particles.push({
-        kind: 'smoke',
-        x, y,
-        vx: Math.cos(ang) * sp,
-        vy: Math.sin(ang) * sp - 0.25,
-        life0: 1200 + Math.random() * 700,
-        life:  1200 + Math.random() * 700,
-        r0: 9 + Math.random() * 6,
-        color: 'rgba(80, 60, 55, 0.55)',
-      });
-    }
-    // Camera shake — small drama bump on big kills.
-    cameraShake = Math.max(cameraShake, 7);
-  }
-  let cameraShake = 0;
-
-  // ---------- UPDATE ----------
-  function update(dt, now) {
-    if (landscapeLocked) return;            // paused while user re-orients device
-
-    readThrottle();
-
-    // Vertical motion — mouse Y as soft target with momentum-style follow.
-    // Keyboard ↑/↓ also nudges player.y for keyboard-only / accessibility play.
-    const yMin = 60, yMax = H - 60;
-    if (mouseActive) {
-      const target = Math.max(yMin, Math.min(yMax, mouseY));
-      const followLerp = 0.18;             // higher = snappier
-      const prevY = player.y;
-      player.y += (target - player.y) * followLerp * (dt / 16);
-      // Derive a frame-rate-normalised vy from the actual y delta so the bank
-      // animation still tracks how fast the ship is climbing/diving.
-      player.vy = (player.y - prevY) / Math.max(1, dt / 16);
-    } else {
-      // Keyboard fallback.
-      let p = 0;
-      if (keys.ArrowUp)   p -= 1;
-      if (keys.ArrowDown) p += 1;
-      player.vy += p * PITCH_ACCEL * dt;
-      player.vy = Math.max(-VY_MAX, Math.min(VY_MAX, player.vy));
-      if (p === 0) player.vy *= Math.pow(PITCH_DAMP, dt / 16);
-      player.y += player.vy * dt;
-    }
-    if (player.y < yMin) { player.y = yMin; player.vy = 0; }
-    if (player.y > yMax) { player.y = yMax; player.vy = 0; }
-
-    // Bank tracks vy direction (subtle).
-    const targetPitch = Math.max(-1, Math.min(1, player.vy / 8));
-    player.pitch += (targetPitch - player.pitch) * 0.12;
-
-    // World scroll + ambient clouds.
-    player.worldX += BASE_SPEED * player.throttle * dt;
-    updateClouds(now);
-
-    // Fire — heat-managed.
-    heat = Math.max(0, heat - HEAT_COOL_PER_MS * dt);
-    if (overheated && heat < 0.30) overheated = false;
-    if (isFiring && !overheated && (now - lastShotAt) >= FIRE_INTERVAL) {
-      spawnPlayerBullet();
-      lastShotAt = now;
-      heat += HEAT_PER_SHOT;
-      if (heat >= 1) { heat = 1; overheated = true; }
-    }
-
-    // Bullets — move and despawn off-screen.
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
-      b.x += b.vx * (dt / 16);
-      b.y += b.vy * (dt / 16);
-      if (b.x < -40 || b.x > MAX_BULLET_X || b.y < -40 || b.y > H + 40) {
-        bullets.splice(i, 1);
-      }
-    }
-
-    // Enemies — spawn timer + per-enemy motion + occasional shots.
-    // Cap simultaneous enemies AND lengthen the cadence so each one feels
-    // like a real engagement rather than a swarm.
-    const MAX_ENEMIES = 2;
-    if (now >= nextEnemyAt && enemies.length < MAX_ENEMIES) {
-      spawnEnemy(now);
-      nextEnemyAt = now + 4200 + Math.random() * 2400;  // every 4.2..6.6s
-    }
-    for (let i = enemies.length - 1; i >= 0; i--) {
-      const en = enemies[i];
-      // Closing speed = closingMul × hero world speed, scaled by throttle so
-      // throttling up speeds the engagement and throttling down stretches it.
-      en.x -= BASE_SPEED * player.throttle * en.closingMul * dt;
-      en.y += en.vy * (dt / 16);
-      // Gentle sinusoidal weave so they don't fly arrow-straight.
-      en.vy += (Math.random() - 0.5) * 0.04;
-      en.vy = Math.max(-0.9, Math.min(0.9, en.vy));
-      if (en.y < 70)     { en.y = 70;     en.vy = Math.abs(en.vy); }
-      if (en.y > H - 70) { en.y = H - 70; en.vy = -Math.abs(en.vy); }
-
-      if (now >= en.fireAt && en.x < W - 30) {
-        spawnEnemyBullet(en);
-        en.fireAt = now + 1100 + Math.random() * 900;
-      }
-      if (en.x < -100) enemies.splice(i, 1);
-    }
-
-    // Collisions: player bullets vs enemies.
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
-      if (b.owner !== 'player') continue;
-      for (let j = enemies.length - 1; j >= 0; j--) {
-        const en = enemies[j];
-        const dx = b.x - en.x, dy = b.y - en.y;
-        if (dx * dx + dy * dy < ENEMY_HIT_R * ENEMY_HIT_R) {
-          bullets.splice(i, 1);
-          en.hp -= 1;
-          if (en.hp <= 0) {
-            spawnExplosion(en.x, en.y, true);   // ship death — big drama
-            enemies.splice(j, 1);
-          } else {
-            spawnExplosion(b.x, b.y, false);    // non-lethal hit spark
-          }
-          break;
-        }
-      }
-    }
-
-    // Collisions: enemy bullets vs player + enemy ship body vs player.
-    if (now > playerInvulnUntil) {
-      for (let i = bullets.length - 1; i >= 0; i--) {
-        const b = bullets[i];
-        if (b.owner !== 'enemy') continue;
-        const dx = b.x - player.screenX, dy = b.y - player.y;
-        if (dx * dx + dy * dy < PLAYER_HIT_R * PLAYER_HIT_R) {
-          bullets.splice(i, 1);
-          playerHP = Math.max(0, playerHP - 8);
-          spawnExplosion(b.x, b.y, false);     // small spark on hit
-          playerInvulnUntil = now + 320;       // brief i-frames
-          break;
-        }
-      }
-      for (let i = enemies.length - 1; i >= 0; i--) {
-        const en = enemies[i];
-        const dx = en.x - player.screenX, dy = en.y - player.y;
-        if (dx * dx + dy * dy < (PLAYER_HIT_R + ENEMY_HIT_R) * (PLAYER_HIT_R + ENEMY_HIT_R) * 0.55) {
-          spawnExplosion(en.x, en.y, true);    // ramming kill — big drama
-          enemies.splice(i, 1);
-          playerHP = Math.max(0, playerHP - 18);
-          playerInvulnUntil = now + 500;
-        }
-      }
-    }
-
-    // Particles — drift, decay.
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const p = particles[i];
-      p.x += p.vx * (dt / 16);
-      p.y += p.vy * (dt / 16);
-      // Smoke decelerates faster (heavier air); sparks coast longer.
-      const damp = p.kind === 'smoke' ? 0.94 : (p.kind === 'spark' ? 0.97 : 1);
-      p.vx *= damp; p.vy *= damp;
-      p.life -= dt;
-      if (p.life <= 0) particles.splice(i, 1);
-    }
-    // Camera shake decay — exponential drop, ~85% retained per 16ms.
-    cameraShake *= Math.pow(0.85, dt / 16);
-    if (cameraShake < 0.05) cameraShake = 0;
-
-    // Ground systems
-    updateStations(now, dt);
-    updateBombs(dt);
-  }
-
-  // ---------- RENDER ----------
-  function clearBg() {
-    ctx.fillStyle = C.bg;
-    ctx.fillRect(0, 0, W, H);
-  }
-
-  // drawParallaxLayer — tile an image horizontally at the layer's scroll rate.
-  // The image is scaled to canvas height; tiled across as many widths as the
-  // viewport needs (usually 2-3 copies, sometimes more for narrow layers).
-  //
-  // `blend` lets star layers use 'screen' compositing so the dark halos baked
-  // into the SVG's radial gradients drop out against the sky underneath. The
-  // SVGs declare mix-blend-mode internally, but canvas rasterises them on a
-  // transparent buffer first — that blend never sees the sky. Doing it here
-  // at the compositor level is the correct fix.
-  function drawParallaxLayer(img, factor, blend) {
-    if (!img) return;
-    const layerScale = H / img.height;
-    const layerW = img.width * layerScale;
-    const offset = (player.worldX * factor) % layerW;
-    ctx.save();
-    if (blend) ctx.globalCompositeOperation = blend;
-    let x = -offset;
-    while (x < W) {
-      ctx.drawImage(img, x, 0, layerW, H);
-      x += layerW;
-    }
-    ctx.restore();
-  }
-
-  // Propeller-spinning illusion. A thin vertical bar at the plane's nose,
-  // light grey, with a small alpha flicker so the eye reads it as a spinning
-  // blade rather than a static fin. Deliberately understated — the previous
-  // wide dark disc dominated the silhouette.
+  // Propeller — thin light-grey sliver with a small alpha flicker.
+  let lastFrameNow = 0;
   function drawPropeller(now, noseX, noseY, height) {
-    const flicker = 0.55 + 0.25 * Math.sin(now * 0.09);   // ~14 Hz subtle pulse
-    const discW = height * 0.025;                         // thin sliver
+    const flicker = 0.55 + 0.25 * Math.sin(now * 0.09);
+    const discW = height * 0.025;
     const discH = height * 0.66;
     ctx.save();
     ctx.translate(noseX, noseY);
@@ -738,133 +551,105 @@
     ctx.restore();
   }
 
-  let lastFrameNow = 0;
-  function drawPlayer() {
-    if (!assets.player) return;
-    const img = assets.player;
-    // The new HeroAircraft pack points RIGHT in the source PNG (left = rear,
-    // right = front), so the player needs no horizontal flip.
-    const targetH = 60;
-    const targetW = targetH * (img.width / img.height);
-    // Idle bob — small constant vertical oscillation so the plane never reads
-    // as a hovering helicopter. Active even when the mouse is held still.
-    const bob = Math.sin(lastFrameNow * 0.003) * 2.2;
+  // Draw a plane in plane-local coords with proper rotation. The source PNG
+  // points RIGHT in its native orientation. When the heading would put the
+  // plane "upside down" (nose pointing left half), we mirror vertically so the
+  // canopy stays toward the sky. This matches the classic Sopwith feel where
+  // tracking left feels natural rather than inverted.
+  function drawAircraft(img, worldX, worldY, heading, targetH) {
+    const sx = worldToScreenX(worldX);
+    if (sx < -120 || sx > W + 120) return;
+    const aspect = img.width / img.height;
+    const targetW = targetH * aspect;
     ctx.save();
-    ctx.translate(player.screenX, player.y + bob);
-    ctx.rotate(player.pitch * BANK_FACTOR);
+    ctx.translate(sx, worldY);
+    // If heading is in the left half (nose pointing left), apply both a
+    // rotation and a vertical flip so the plane stays right-side-up while
+    // still pointing in its travel direction.
+    const facingLeft = Math.cos(heading) < 0;
+    if (facingLeft) {
+      // Equivalent transform: mirror around the heading line.
+      ctx.rotate(heading);
+      ctx.scale(1, -1);
+    } else {
+      ctx.rotate(heading);
+    }
     ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
     drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
     ctx.restore();
   }
 
-  // Subtle exhaust trail — two short fading streaks behind the engine. Pure
-  // canvas, no asset; gives the ship a sense of forward motion at standstill.
-  function drawExhaustTrail(now) {
-    // Offsets scaled for the 55-tall ship; long/short streaks both fade in.
-    const len = 18 + 12 * player.throttle;
-    const px = player.screenX - 30;
-    const py = player.y + player.pitch * 4;
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    const g = ctx.createLinearGradient(px - len, py, px, py);
-    g.addColorStop(0, 'rgba(216, 82, 63, 0)');
-    g.addColorStop(1, 'rgba(255, 200, 120, 0.85)');
-    ctx.strokeStyle = g;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(px - len, py - 1);
-    ctx.lineTo(px, py - 1);
-    ctx.moveTo(px - len * 0.85, py + 3);
-    ctx.lineTo(px, py + 3);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawBullets() {
-    for (const b of bullets) {
-      ctx.save();
-      if (b.owner === 'player') {
-        // Light-yellow tracer with a hot white core — reads instantly
-        // against the deep-blue background.
-        ctx.shadowColor = 'rgba(255, 220, 90, 0.9)';
-        ctx.shadowBlur = 8;
-        ctx.fillStyle = 'rgba(255, 235, 130, 0.95)';
-        ctx.fillRect(b.x - 7, b.y - 2, 14, 4);
-        ctx.shadowBlur = 0;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(b.x - 3, b.y - 0.75, 6, 1.5);
-      } else {
-        // Red enemy bolt — short blob with a slight glow.
-        ctx.shadowColor = '#ff5555';
-        ctx.shadowBlur = 6;
-        ctx.fillStyle = '#ff8888';
-        ctx.fillRect(b.x - 5, b.y - 2, 10, 4);
-      }
-      ctx.restore();
-    }
+  function drawPlayer(now) {
+    if (!assets.player) return;
+    // Brief flicker while invulnerable.
+    if (now <= player.invulnUntil && Math.floor(now / 60) % 2 === 0) return;
+    drawAircraft(assets.player, player.x, player.y, player.heading, 60);
   }
 
   function drawEnemies() {
     for (const en of enemies) {
-      if (!en.img) continue;
-      const targetH = 60;
-      const targetW = targetH * (en.img.width / en.img.height);
-      // Each enemy bobs on its own phase (seeded by its arrival time) so the
-      // squadron never reads as a row of stationary helicopters.
-      const bob = Math.sin(lastFrameNow * 0.0034 + (en.fireAt || 0) * 0.0007) * 1.8;
+      if (!en.alive || !en.img) continue;
+      drawAircraft(en.img, en.x, en.y, en.heading, 60);
+    }
+  }
+
+  function drawBullets() {
+    for (const b of bullets) {
+      const sx = worldToScreenX(b.x);
+      if (sx < -20 || sx > W + 20) continue;
       ctx.save();
-      ctx.translate(en.x, en.y + bob);
-      // The new enemy-aircraft pack points RIGHT in the source PNG; enemies
-      // are flying LEFT toward the player, so mirror horizontally. The bank
-      // sign is flipped post-mirror so a climbing enemy still tips its
-      // nose up on screen.
-      ctx.scale(-1, 1);
-      ctx.rotate(-Math.max(-0.4, Math.min(0.4, en.vy * 0.4)));
-      ctx.drawImage(en.img, -targetW / 2, -targetH / 2, targetW, targetH);
-      // Propeller at the nose (right edge of plane-local space, which after
-      // the mirror becomes the LEFT edge on screen — exactly where we want it).
-      drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
+      if (b.owner === 'player') {
+        ctx.shadowColor = 'rgba(255, 220, 90, 0.9)';
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = 'rgba(255, 235, 130, 0.95)';
+        ctx.fillRect(sx - 7, b.y - 2, 14, 4);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(sx - 3, b.y - 0.75, 6, 1.5);
+      } else {
+        ctx.shadowColor = '#ff5555';
+        ctx.shadowBlur = 6;
+        ctx.fillStyle = '#ff8888';
+        ctx.fillRect(sx - 5, b.y - 2, 10, 4);
+      }
       ctx.restore();
     }
   }
 
   function drawParticles() {
     for (const p of particles) {
-      const t = Math.max(0, p.life / p.life0);   // 1 = fresh, 0 = dead
+      const t = Math.max(0, p.life / p.life0);
+      const sx = worldToScreenX(p.x);
+      if (sx < -60 || sx > W + 60) continue;
       ctx.save();
       if (p.kind === 'flash') {
-        // Bright disc that fades very quickly.
         ctx.globalAlpha = Math.pow(t, 1.5);
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r0 * (1.2 - 0.2 * t), 0, Math.PI * 2);
+        ctx.arc(sx, p.y, p.r0 * (1.2 - 0.2 * t), 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'ring') {
-        // Expanding stroked ring — outer shock front.
         const r = p.r0 * (1 - t) + 6;
         ctx.globalAlpha = t * 0.85;
         ctx.strokeStyle = p.color;
         ctx.lineWidth = 4 * t + 1;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.arc(sx, p.y, r, 0, Math.PI * 2);
         ctx.stroke();
       } else if (p.kind === 'smoke') {
-        // Soft dark puff drifting and growing as it fades.
         ctx.globalAlpha = t * 0.55;
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r0 * (2.2 - 1.2 * t), 0, Math.PI * 2);
+        ctx.arc(sx, p.y, p.r0 * (2.2 - 1.2 * t), 0, Math.PI * 2);
         ctx.fill();
       } else {
-        // Spark — bright glowing dot that fades and shrinks.
         ctx.globalAlpha = Math.pow(t, 0.55);
         ctx.shadowColor = p.color;
         ctx.shadowBlur = 10 * t;
         ctx.fillStyle = p.color;
         const r = (p.r0 || 3) * t + 0.8;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.arc(sx, p.y, r, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -872,22 +657,21 @@
   }
 
   function drawHUD() {
-    // HP bar — top-left, 200×10. Heat bar — directly below, 200×6.
     ctx.save();
     ctx.font = '700 11px Inter, sans-serif';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
 
     const x = 24, hpY = 22, htY = 42;
-    // HP background + fill
+    // HP
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     ctx.fillRect(x, hpY, 200, 10);
-    ctx.fillStyle = playerHP > 50 ? '#5DD39E' : playerHP > 25 ? '#FFD23F' : '#FF6B5C';
-    ctx.fillRect(x, hpY, 200 * (playerHP / 100), 10);
+    ctx.fillStyle = player.hp > 50 ? '#5DD39E' : player.hp > 25 ? '#FFD23F' : '#FF6B5C';
+    ctx.fillRect(x, hpY, 200 * (player.hp / 100), 10);
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.fillText('HP', x + 210, hpY + 5);
 
-    // Heat background + fill
+    // Heat
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     ctx.fillRect(x, htY, 200, 6);
     ctx.fillStyle = overheated ? '#FF6B5C' : '#FFB347';
@@ -895,49 +679,67 @@
     ctx.fillStyle = 'rgba(255,255,255,0.65)';
     ctx.fillText(overheated ? 'COOLING' : 'HEAT', x + 210, htY + 3);
 
-    ctx.restore();
+    // Throttle indicator below
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(x, htY + 14, 200, 6);
+    ctx.fillStyle = '#7DD8FF';
+    ctx.fillRect(x, htY + 14, 200 * player.throttle, 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.fillText('THROTTLE', x + 210, htY + 17);
 
-    // Right-side counters: bombs remaining + ground stations remaining.
-    ctx.save();
+    // Right-side: targets remaining + minimap.
     ctx.font = '800 14px Inter, sans-serif';
-    ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
     const rx = W - 24;
+    const targets = targetsRemaining();
+    ctx.fillStyle = targets > 0 ? '#FF6B5C' : '#5DD39E';
+    ctx.fillText('TARGETS  ' + targets, rx, 22);
 
-    // Bomb icon — small black ellipse + yellow flicker
-    ctx.fillStyle = '#222';
-    ctx.beginPath(); ctx.ellipse(rx - 36, 22, 5, 8, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ffd278';
-    ctx.beginPath(); ctx.ellipse(rx - 36, 14, 2, 3.5, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = bombCount > 0 ? '#FFFFFF' : '#FF6B5C';
-    ctx.fillText('× ' + bombCount, rx, 22);
-
-    // Ground station counter
-    const stationsAlive = stations.filter(s => s.alive).length;
-    ctx.fillStyle = stationsAlive > 0 ? '#FF6B5C' : '#5DD39E';
-    ctx.beginPath(); ctx.rect(rx - 58, 38, 16, 10); ctx.fill();
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '700 12px Inter, sans-serif';
-    ctx.fillText('GROUND  ' + stationsAlive, rx, 44);
+    // Minimap — thin bar across the top showing stage progress.
+    const mmX = W * 0.30, mmW = W * 0.40, mmY = 18, mmH = 8;
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(mmX, mmY, mmW, mmH);
+    // Apartment dots
+    for (const a of apartments) {
+      if (!a.alive) continue;
+      const px = mmX + (a.x / STAGE_W) * mmW;
+      ctx.fillStyle = '#FFB347';
+      ctx.fillRect(px - 1, mmY + 2, 2, mmH - 4);
+    }
+    // Enemy dots
+    for (const en of enemies) {
+      if (!en.alive) continue;
+      const px = mmX + (en.x / STAGE_W) * mmW;
+      ctx.fillStyle = '#FF6B5C';
+      ctx.fillRect(px - 1.5, mmY + 1, 3, mmH - 2);
+    }
+    // Player dot
+    const pPx = mmX + (player.x / STAGE_W) * mmW;
+    ctx.fillStyle = '#5DD39E';
+    ctx.fillRect(pPx - 1.5, mmY, 3, mmH);
 
     ctx.restore();
   }
 
-  // drawSky — single full-canvas stretch of sky.jpg. We deliberately do NOT
-  // tile horizontally because the source image's left/right edges don't
-  // match (a visible seam ran down the middle of the canvas). The clouds
-  // provide the parallax sense of motion; the sky itself can be static.
-  function drawSky() {
-    if (!assets.sky) return;
-    ctx.drawImage(assets.sky, 0, 0, W, H);
+  function drawGameOverOverlay() {
+    if (!gameOver) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(2, 6, 17, 0.66)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = win ? '#5DD39E' : '#FF6B5C';
+    ctx.font = '900 64px Inter, sans-serif';
+    ctx.fillText(win ? 'STAGE CLEAR' : 'SHOT DOWN', W / 2, H / 2 - 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = '600 18px Inter, sans-serif';
+    ctx.fillText('Reload to fly again', W / 2, H / 2 + 28);
+    ctx.restore();
   }
 
   function render(now) {
     lastFrameNow = now;
     clearBg();
-    // Apply camera shake — small random offset for a few frames after a big
-    // explosion. Save/restore the whole scene block as a pair so the matrix
-    // stays balanced regardless of shake state.
     const shaking = cameraShake > 0.05;
     ctx.save();
     if (shaking) {
@@ -945,32 +747,23 @@
       const sy = (Math.random() - 0.5) * cameraShake * 2;
       ctx.translate(sx, sy);
     }
-
     drawSky();
     drawClouds();
     drawStreet();
-    drawStations();
-    drawExhaustTrail(now);
-    // Player render — blink during invuln frames so hits are felt.
-    if (now <= playerInvulnUntil && Math.floor(now / 60) % 2 === 0) {
-      // skip drawing this frame
-    } else {
-      drawPlayer();
-    }
+    drawApartments();
     drawEnemies();
+    drawPlayer(now);
     drawBullets();
-    drawBombs();
     drawParticles();
-
     ctx.restore();
-    // HUD sits OUTSIDE the shake transform so the bars stay rock-steady.
     drawHUD();
+    drawGameOverOverlay();
   }
 
   // ---------- LOOP ----------
   let lastTime = performance.now();
   function loop(now) {
-    const dt = Math.min(40, now - lastTime);   // cap to avoid huge jumps on tab-resume
+    const dt = Math.min(40, now - lastTime);
     lastTime = now;
     update(dt, now);
     render(now);
