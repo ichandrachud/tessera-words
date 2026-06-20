@@ -143,19 +143,18 @@
   const STREET_H        = 72;          // street strip height in logical px
   const STREET_TOP_Y    = H - STREET_H;
   const TERRAIN_BASE_Y  = STREET_TOP_Y; // bombs treat the street top as ground
-  const APARTMENT_RENDER_H = 240;
+  const APARTMENT_RENDER_H = 192;       // 20 % smaller than the previous 240
 
   // Constant ground height — bombs and station-impact effects still query
   // this so they share one source of truth.
   function terrainHeightAt(_worldX) { return TERRAIN_BASE_Y; }
 
-  // Street tile — the source PNG is one long strip. We tile it horizontally
-  // using the canvas pattern API so the kerb texture is continuous and the
-  // pattern offset advances with the world scroll.
+  // Street strip — the source PNG is one long band. We pin it STATIC at the
+  // bottom of the canvas (no scroll), so its perspective stays fixed while
+  // the apartments slide across the top edge. A scrolling road would compete
+  // with the apartment motion and read as the camera tilting.
   function drawStreet() {
     if (!assets.street) {
-      // Fallback while loading: solid dark band so the apartments still have
-      // a horizon to sit on.
       ctx.fillStyle = '#252028';
       ctx.fillRect(0, STREET_TOP_Y, W, STREET_H);
       return;
@@ -163,9 +162,8 @@
     const img = assets.street;
     const tileH = STREET_H;
     const tileW = tileH * (img.width / img.height);
-    const offset = -((player.worldX * PARALLAX.ground) % tileW);
-    for (let x = offset; x < W; x += tileW) {
-      ctx.drawImage(img, x, STREET_TOP_Y, tileW + 1, tileH);   // +1 to hide seams
+    for (let x = 0; x < W; x += tileW) {
+      ctx.drawImage(img, x, STREET_TOP_Y, tileW + 1, tileH);
     }
   }
 
@@ -698,35 +696,21 @@
     ctx.restore();
   }
 
-  // Propeller-spinning illusion. We draw a translucent disc at the plane's
-  // nose every frame, with width and alpha oscillating fast enough (~60 Hz
-  // sampled, varies per blade phase) that the eye interprets it as a
-  // motion-blurred prop. A thin white "blade flash" cuts through the disc
-  // a couple of times per rotation for extra sparkle.
-  function drawPropeller(now, faceRight, noseX, noseY, height) {
-    const phase = (now * 0.085) % (Math.PI * 2);          // ~28 Hz visual rotation
-    const blade = Math.abs(Math.sin(phase * 2));          // 0..1, twice per rotation
-    const discW = height * 0.10 + blade * height * 0.05;  // narrow → wider as blade aligns
-    const discH = height * 0.78;
-    const dir   = faceRight ? 1 : -1;
+  // Propeller-spinning illusion. A thin vertical bar at the plane's nose,
+  // light grey, with a small alpha flicker so the eye reads it as a spinning
+  // blade rather than a static fin. Deliberately understated — the previous
+  // wide dark disc dominated the silhouette.
+  function drawPropeller(now, noseX, noseY, height) {
+    const flicker = 0.55 + 0.25 * Math.sin(now * 0.09);   // ~14 Hz subtle pulse
+    const discW = height * 0.025;                         // thin sliver
+    const discH = height * 0.66;
     ctx.save();
     ctx.translate(noseX, noseY);
-    // Soft disc — pure motion-blur read.
-    ctx.globalAlpha = 0.22 + blade * 0.18;
-    ctx.fillStyle = '#1a1a1a';
+    ctx.globalAlpha = flicker;
+    ctx.fillStyle = 'rgba(220, 220, 220, 0.9)';
     ctx.beginPath();
-    ctx.ellipse(dir * height * 0.02, 0, discW, discH / 2, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, discW, discH / 2, 0, 0, Math.PI * 2);
     ctx.fill();
-    // Bright blade-flash sweep — short, very faint, only on the alignment beat.
-    if (blade > 0.85) {
-      ctx.globalAlpha = (blade - 0.85) * 1.2;
-      ctx.strokeStyle = 'rgba(255, 240, 210, 0.85)';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.moveTo(0, -discH / 2 + 2);
-      ctx.lineTo(0,  discH / 2 - 2);
-      ctx.stroke();
-    }
     ctx.restore();
   }
 
@@ -743,7 +727,7 @@
     ctx.rotate(player.pitch * BANK_FACTOR);
     ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
     // Propeller is at the nose — right edge of the plane in plane-local space.
-    drawPropeller(lastFrameNow, true, targetW / 2 - 4, 0, targetH);
+    drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
     ctx.restore();
   }
 
@@ -811,7 +795,7 @@
       ctx.drawImage(en.img, -targetW / 2, -targetH / 2, targetW, targetH);
       // Propeller at the nose (right edge of plane-local space, which after
       // the mirror becomes the LEFT edge on screen — exactly where we want it).
-      drawPropeller(lastFrameNow, true, targetW / 2 - 4, 0, targetH);
+      drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
       ctx.restore();
     }
   }
