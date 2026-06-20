@@ -166,26 +166,61 @@
     return src;
   }
 
-  // Plane engine — continuous low-pass-filtered noise, opening up as throttle
-  // climbs. Gives the cockpit a constant "thrum" you can feel.
+  // Plane engine — a TONAL drone with a slow tremolo to read as a propeller
+  // "chuff-chuff" whirr, not wind static. The voice is built from:
+  //   • a sawtooth oscillator at the engine fundamental (~70-150 Hz),
+  //   • another sawtooth one octave up at lower gain, for body,
+  //   • a low-pass filter to keep everything dull,
+  //   • a sine LFO modulating the master gain at ~12-20 Hz — that's the
+  //     propeller-blade interruption rate, which is what makes it sound
+  //     like an engine and not a synth pad.
   function startEngine() {
     if (engineNodes || !audioCtx) return;
-    const src = makeNoiseSource();
+    const t = audioCtx.currentTime;
+    const fund = audioCtx.createOscillator();
+    fund.type = 'sawtooth';
+    fund.frequency.value = 90;
+    const harm = audioCtx.createOscillator();
+    harm.type = 'sawtooth';
+    harm.frequency.value = 180;
+    const harmGain = audioCtx.createGain();
+    harmGain.gain.value = 0.30;                      // octave up at 30 % gain → body
     const lp = audioCtx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 180;
-    lp.Q.value = 1.4;
+    lp.frequency.value = 380;
+    lp.Q.value = 1.0;
+    // Master gain (modulated by tremolo)
     const gain = audioCtx.createGain();
     gain.gain.value = 0.04;
-    src.connect(lp).connect(gain).connect(masterGain);
-    engineNodes = { lp, gain };
+    // Tremolo LFO — sine that goes into the gain node's .gain param
+    const lfo = audioCtx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 14;
+    const lfoDepth = audioCtx.createGain();
+    lfoDepth.gain.value = 0.025;                     // ± modulation depth on the master gain
+    lfo.connect(lfoDepth).connect(gain.gain);
+    fund.connect(lp);
+    harm.connect(harmGain).connect(lp);
+    lp.connect(gain).connect(masterGain);
+    fund.start(t);
+    harm.start(t);
+    lfo.start(t);
+    engineNodes = { fund, harm, lp, gain, lfo };
   }
   function updateEngine() {
     if (!engineNodes) return;
-    // Throttle 0→1 maps to filter 150 → 700 Hz and gain 0.035 → 0.10.
     const t = player.throttle;
-    engineNodes.lp.frequency.setTargetAtTime(150 + t * 550, audioCtx.currentTime, 0.08);
-    engineNodes.gain.gain.setTargetAtTime(0.035 + t * 0.07, audioCtx.currentTime, 0.10);
+    const ct = audioCtx.currentTime;
+    // Fundamental 70 → 150 Hz with throttle; harmonic tracks at 2× the fundamental.
+    const f0 = 70 + t * 80;
+    engineNodes.fund.frequency.setTargetAtTime(f0, ct, 0.08);
+    engineNodes.harm.frequency.setTargetAtTime(f0 * 2, ct, 0.08);
+    // LFO speed scales with throttle (propeller spins faster at high RPM).
+    engineNodes.lfo.frequency.setTargetAtTime(12 + t * 10, ct, 0.10);
+    // Slight filter open-up at full throttle so it brightens a touch.
+    engineNodes.lp.frequency.setTargetAtTime(340 + t * 220, ct, 0.10);
+    // Master gain — quiet at idle, fuller at full throttle.
+    engineNodes.gain.gain.setTargetAtTime(0.035 + t * 0.05, ct, 0.10);
   }
 
   // Proximity rumble for tanks + trucks — low band-pass noise whose gain
