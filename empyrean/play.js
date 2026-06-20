@@ -18,6 +18,20 @@
     ? 'mobile' : 'desktop';
   document.body.classList.add('mode-' + MODE);
 
+  // ---------- WORLD ----------
+  // The stage / scenery / ground-target pack to load. Default is the
+  // daytime city. URL options:
+  //   ?world=ocean         — open water + enemy ships
+  //   ?world=night-city    — same city, starry sky + dark overlay
+  //   ?world=night-ocean   — open water, starry sky + dark overlay
+  const WORLD = (() => {
+    const w = new URLSearchParams(window.location.search).get('world');
+    return ['ocean', 'night-city', 'night-ocean'].includes(w) ? w : 'city';
+  })();
+  const IS_OCEAN = WORLD === 'ocean' || WORLD === 'night-ocean';
+  const IS_NIGHT = WORLD === 'night-city' || WORLD === 'night-ocean';
+  document.body.classList.add('world-' + WORLD);
+
   // ---------- CANVAS DIMS (FIXED 16:9) ----------
   const W = 1280;
   const H = 720;
@@ -90,6 +104,26 @@
   loadImage('./assets/street/street2.jpg').then(img => { assets.street = img; });
   loadImage('./assets/planes-v2/Tsunami.png').then(img => { assets.player = img; });
 
+  // ---------- OCEAN WORLD ASSETS ----------
+  // Loaded only when WORLD === 'ocean' so the city stage isn't slowed down
+  // by sprites it never uses. buildStageIfReady checks for these specifically
+  // when the world is ocean.
+  if (IS_OCEAN) {
+    loadImage('./assets/ocean/water.jpg').then(img => { assets.water = img; });
+    loadImage('./assets/ocean/ship-turret.png').then(img => { assets.shipTurret = img; });
+    Promise.all([1, 2, 3, 4, 5].map(n =>
+      loadImage(`./assets/ocean/enemy-ship-0${n}.png`)
+    )).then(imgs => { assets.ships = imgs.filter(Boolean); buildStageIfReady(); });
+  }
+
+  // ---------- NIGHT-SKY ASSETS ----------
+  // Deep-blue gradient background; the stars themselves are drawn
+  // procedurally in drawNightSky (the legacy SVG star layers baked in dark
+  // radial-gradient centres that read as a dark halo around each star).
+  if (IS_NIGHT) {
+    loadImage('./assets/skybackground.svg').then(img => { assets.skyNight = img; });
+  }
+
   // ---------- MISSION 1 — AIRCRAFT LINEUP ----------
   // Player choice: 4 planes + 1 chopper. Stats are gameplay values used by the
   // aircraft-select screen (and, downstream, by the live game).
@@ -106,6 +140,22 @@
   // can just read `aircraft.image`. Missing images render as a placeholder.
   for (const a of MISSION_1_AIRCRAFT) {
     loadImage(a.file).then(img => { a.image = img; });
+  }
+
+  // ---------- MISSION 1 — BOMB LINEUP ----------
+  // Five distinct payloads. Stats drive both the carousel readout and live
+  // gameplay (damage = HP per hit on ground targets, blast = AoE radius in
+  // world-px, speedMult = horizontal/vertical velocity multiplier on drop).
+  const MISSION_1_BOMBS = [
+    { name: 'Lance',   file: './assets/bombs/Lance.png',   damage: 1, blast:   0, speedMult: 1.4, blurb: 'Piercing dart. Fast, surgical.' },
+    { name: 'Anvil',   file: './assets/bombs/Anvil.png',   damage: 3, blast:   0, speedMult: 0.7, blurb: 'Heavy single-target. Sinks ships in one.' },
+    { name: 'Bellows', file: './assets/bombs/Bellows.png', damage: 1, blast: 110, speedMult: 1.0, blurb: 'Airburst spread. Wide damage zone.' },
+    { name: 'Pyre',    file: './assets/bombs/Pyre.png',    damage: 2, blast:  70, speedMult: 0.9, blurb: 'Incendiary. Splash + extra punch.' },
+    { name: 'Dart',    file: './assets/bombs/Dart.png',    damage: 1, blast:   0, speedMult: 1.6, blurb: 'Light, fastest. Best for moving targets.' },
+  ];
+  const BOMB_STAT_MAX = { damage: 3, blast: 120, speedMult: 1.6 };
+  for (const b of MISSION_1_BOMBS) {
+    loadImage(b.file).then(img => { b.image = img; });
   }
   Promise.all([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n =>
     loadImage(`./assets/planes-v2/enemy-aircraft${n}.png`)
@@ -389,6 +439,17 @@
   // apartments sit on). Their wheels sit just above the bottom edge of the
   // canvas and they're rendered at 60 % of the previous size.
   const ROAD_BOTTOM_Y   = H - 8;
+  // ----- Ocean ground geometry -----
+  // Waterline sits where the top of the apartment band would have been, so
+  // ships have plenty of empty sky above them and the sky band still feels
+  // generous. The water surface visually extends down to ROAD_BOTTOM_Y.
+  const OCEAN_WATERLINE_Y = STREET_TOP_Y - APARTMENT_RENDER_H;
+  const SHIP_BODY_H = 120;          // ~17 % of canvas — leaves the superstructure clearly visible
+  const SHIP_TURRET_H = 28;         // a touch larger than the building turret
+  const SHIP_HP = 3;                // 3 bomb hits to sink — "more than 2 bombs to destroy completely"
+  // The ground-target's bottom-most y. City buildings rest on the street;
+  // ocean ships rest on the waterline.
+  const GROUND_TARGET_Y = IS_OCEAN ? OCEAN_WATERLINE_Y : STREET_TOP_Y;
   const TANK_BODY_H     = 60;        // ~8 % of canvas — matches reference vehicle scale
   const TANK_TURRET_H   = 20;
   const TRUCK_H         = 54;        // ~7.5 % of canvas
@@ -447,8 +508,8 @@
   const CHOPPER_SPEED = 0.075;  // px / ms
   // Hero speed band — MIN_SPEED is the default cruise (throttle = 0).
   // Pressing → throttles up; full throttle is +30 % above default.
-  const MIN_SPEED   = 0.082;    // px / ms — default cruise speed
-  const MAX_SPEED   = 0.107;    // px / ms — full throttle (+30 % above MIN)
+  const MIN_SPEED   = 0.1025;   // px / ms — default cruise speed (was 0.082, +25 %)
+  const MAX_SPEED   = 0.1338;   // px / ms — full throttle (+30 % above MIN, was 0.107)
   // Enemy planes use their own band — they don't track player throttle.
   const ENEMY_MIN_SPEED = 0.0264;
   const ENEMY_MAX_SPEED = 0.0792;
@@ -492,10 +553,19 @@
   let stageBuilt = false;
   function buildStageIfReady() {
     if (stageBuilt) return;
-    if (!assets.apartments.length || !assets.enemies.length) return;
-    if (!assets.tankBodies.length || !assets.trucks.length) return;
-    if (!assets.militaryBodies.length || !assets.militaryTurret) return;
+    if (!assets.enemies.length) return;
+    if (IS_OCEAN) {
+      if (!assets.water || !assets.ships || !assets.ships.length || !assets.shipTurret) return;
+    } else {
+      if (!assets.apartments.length) return;
+      if (!assets.tankBodies.length || !assets.trucks.length) return;
+      if (!assets.militaryBodies.length || !assets.militaryTurret) return;
+    }
     stageBuilt = true;
+    if (IS_OCEAN) {
+      buildOceanStage();
+      return;
+    }
 
     // --- Apartments (background scenery) — packed edge-to-edge across the
     // FULL width of the stage so the very left edge is never empty.
@@ -631,6 +701,70 @@
         turretAngle: -Math.PI / 2,    // start aimed straight up (default source orientation)
         fireAt: 0,
         lastSmokeAt: 0,
+        kind: 'building',
+        groundY: STREET_TOP_Y,
+      });
+    }
+  }
+
+  // Ocean stage — water + 5 stationary enemy ships acting as ground targets.
+  // Reuses the militaryBuildings array so the existing turret-tracking,
+  // bullet-collision and bomb-damage code paths "just work" with kind:'ship'
+  // entries.  No apartments / tanks / trucks in this world.
+  function buildOceanStage() {
+    function deckPicker(pool) {
+      let deck = [];
+      return () => {
+        if (deck.length === 0) {
+          deck = pool.slice();
+          for (let k = deck.length - 1; k > 0; k--) {
+            const j = Math.floor(Math.random() * (k + 1));
+            [deck[k], deck[j]] = [deck[j], deck[k]];
+          }
+        }
+        return deck.pop();
+      };
+    }
+    // Enemy planes — same count + behaviour as the city stage.
+    const N_ENEMIES = 8;
+    const pickEnemyImg = deckPicker(assets.enemies);
+    for (let i = 0; i < N_ENEMIES; i++) {
+      const img = pickEnemyImg();
+      const startX = 1200 + (i + 0.5) * (STAGE_W - 1400) / N_ENEMIES;
+      const yFrac = 0.1 + Math.random() * 0.75;
+      const startY = FLIGHT_Y_MIN + yFrac * (FLIGHT_Y_MAX - FLIGHT_Y_MIN);
+      enemies.push({
+        x: startX, y: startY,
+        heading: Math.PI,
+        throttle: 0.45,
+        hp: 3,
+        alive: true,
+        img,
+        fireAt: 0,
+        awake: false,
+        wanderAngle: (Math.random() - 0.5) * 0.6,
+        wanderUntil: 0,
+      });
+    }
+    // Ships — 5 stationary vessels spread across the stage.
+    const N_SHIPS = 5;
+    const pickShipIdx = deckPicker(assets.ships.map((_, i) => i));
+    for (let i = 0; i < N_SHIPS; i++) {
+      const bodyImg = assets.ships[pickShipIdx()];
+      const h = SHIP_BODY_H;
+      const w = h * (bodyImg.width / bodyImg.height);
+      const x = 700 + (i + 0.5) * (STAGE_W - 1100) / N_SHIPS + (Math.random() - 0.5) * 240;
+      militaryBuildings.push({
+        x, w, h,
+        bodyImg,
+        burntImg: null,           // ships don't have a burnt variant — they just sink/explode
+        alive: true,
+        hp: SHIP_HP,
+        turretAngle: -Math.PI / 2,
+        fireAt: 0,
+        lastSmokeAt: 0,
+        kind: 'ship',
+        groundY: OCEAN_WATERLINE_Y,
       });
     }
   }
@@ -642,6 +776,7 @@
   const keys = Object.create(null);
   let bombRequest = false;             // set by 'B' keydown or mobile double-tap
   let advanceRequested = false;        // set by Space / Enter edge-press or button tap; used to step through pre-play scenes
+  let paused = false;                  // toggled by P / Esc while scene === 'playing'
   window.addEventListener('keydown', (e) => {
     if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
     if (e.repeat) return;
@@ -657,11 +792,23 @@
       } else if (e.key === ' ' || e.key === 'Enter') {
         aircraftChosen = MISSION_1_AIRCRAFT[aircraftIndex];
       }
+    } else if (scene === 'bombs') {
+      if (e.key === 'ArrowLeft') {
+        bombIndex = (bombIndex - 1 + MISSION_1_BOMBS.length) % MISSION_1_BOMBS.length;
+      } else if (e.key === 'ArrowRight') {
+        bombIndex = (bombIndex + 1) % MISSION_1_BOMBS.length;
+      } else if (e.key === ' ' || e.key === 'Enter') {
+        bombChosen = MISSION_1_BOMBS[bombIndex];
+      }
     } else if (e.key === ' ' || e.key === 'Enter') {
       advanceRequested = true;
     }
     if (e.key === 'b' || e.key === 'B') bombRequest = true;
     if (e.key === 'm' || e.key === 'M') setSoundOn(!soundOn);
+    // Pause/resume — only meaningful once gameplay has started.
+    if ((e.key === 'p' || e.key === 'P' || e.key === 'Escape') && scene === 'playing') {
+      paused = !paused;
+    }
   });
   window.addEventListener('keyup', (e) => { keys[e.key] = false; });
   window.addEventListener('blur', () => {
@@ -721,6 +868,17 @@
       }
       return;
     }
+    if (scene === 'bombs') {
+      if (bombPrevRect && inRect(bombPrevRect, p.x, p.y)) {
+        bombIndex = (bombIndex - 1 + MISSION_1_BOMBS.length) % MISSION_1_BOMBS.length;
+      } else if (bombNextRect && inRect(bombNextRect, p.x, p.y)) {
+        bombIndex = (bombIndex + 1) % MISSION_1_BOMBS.length;
+      } else if (bombEquipRect && inRect(bombEquipRect, p.x, p.y)) {
+        bombChosen = MISSION_1_BOMBS[bombIndex];
+      }
+      return;
+    }
+    if (paused) { paused = false; return; }           // tap during pause = resume; swallow this touch so it doesn't also fire
     touchOrigin = p;
     keys[' '] = true;                                 // fire while held
   }, { passive: false });
@@ -765,6 +923,19 @@
   let selectPrevHover = false;
   let selectNextHover = false;
   let selectChooseHover = false;
+  // Bomb-select carousel state — same shape as aircraft-select but for the
+  // bomb-load step that runs after the aircraft is chosen.
+  let bombIndex = 0;
+  let bombChosen = null;
+  let bombPrevRect = null;
+  let bombNextRect = null;
+  let bombEquipRect = null;
+  let bombPrevHover = false;
+  let bombNextHover = false;
+  let bombEquipHover = false;
+  // The bomb the player equipped for the live game (set when bomb-select
+  // hands off to playing; consumed by dropBomb).
+  let equippedBomb = MISSION_1_BOMBS[0];
   function inRect(r, x, y) {
     return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   }
@@ -786,12 +957,21 @@
       } else if (selectChooseRect && inRect(selectChooseRect, p.x, p.y)) {
         aircraftChosen = MISSION_1_AIRCRAFT[aircraftIndex];
       }
+    } else if (scene === 'bombs') {
+      if (bombPrevRect && inRect(bombPrevRect, p.x, p.y)) {
+        bombIndex = (bombIndex - 1 + MISSION_1_BOMBS.length) % MISSION_1_BOMBS.length;
+      } else if (bombNextRect && inRect(bombNextRect, p.x, p.y)) {
+        bombIndex = (bombIndex + 1) % MISSION_1_BOMBS.length;
+      } else if (bombEquipRect && inRect(bombEquipRect, p.x, p.y)) {
+        bombChosen = MISSION_1_BOMBS[bombIndex];
+      }
     }
   });
   canvas.addEventListener('mousemove', (e) => {
     const p = canvasFromClient(e.clientX, e.clientY);
     let hovering = false;
     startButtonHover = acceptButtonHover = selectPrevHover = selectNextHover = selectChooseHover = false;
+    bombPrevHover = bombNextHover = bombEquipHover = false;
     if (scene === 'intro') {
       startButtonHover = !!(startButtonRect && inRect(startButtonRect, p.x, p.y));
       hovering = startButtonHover;
@@ -803,6 +983,11 @@
       selectNextHover   = !!(selectNextRect   && inRect(selectNextRect,   p.x, p.y));
       selectChooseHover = !!(selectChooseRect && inRect(selectChooseRect, p.x, p.y));
       hovering = selectPrevHover || selectNextHover || selectChooseHover;
+    } else if (scene === 'bombs') {
+      bombPrevHover  = !!(bombPrevRect  && inRect(bombPrevRect,  p.x, p.y));
+      bombNextHover  = !!(bombNextRect  && inRect(bombNextRect,  p.x, p.y));
+      bombEquipHover = !!(bombEquipRect && inRect(bombEquipRect, p.x, p.y));
+      hovering = bombPrevHover || bombNextHover || bombEquipHover;
     }
     canvas.style.cursor = hovering ? 'pointer' : '';
   });
@@ -859,11 +1044,13 @@
     if (now - lastBombAt < BOMB_COOLDOWN) return;
     lastBombAt = now;
     const sp = playerSpeed();
+    const mult = equippedBomb ? equippedBomb.speedMult : 1;
     bombs.push({
       x: player.x,
       y: player.y + 14,
-      vx: Math.cos(player.heading) * sp * 0.6,    // partial forward inheritance
-      vy: Math.sin(player.heading) * sp * 0.6 + 0.05,
+      vx: Math.cos(player.heading) * sp * 0.6 * mult,
+      vy: Math.sin(player.heading) * sp * 0.6 * mult + 0.05,
+      type: equippedBomb,
     });
   }
 
@@ -1014,23 +1201,30 @@
       return;
     }
     if (scene === 'select') {
-      // Carousel + Choose handled by their own click / key handlers below.
-      // Space alone here would be ambiguous (next slide? choose?), so we
-      // require the explicit Choose button.
       if (aircraftChosen) {
-        // Wire the chosen sprite + kind into the live game and enter playing.
+        // Wire the chosen sprite + kind into the live game, then advance to
+        // bomb-select.  Audio waits until after bombs are equipped.
         if (aircraftChosen.image) assets.player = aircraftChosen.image;
         player.kind = aircraftChosen.kind;
         player.heading = 0;
         player.throttle = 0;
         player.facing = 1;
-        scene = 'playing';
+        scene = 'bombs';
         aircraftChosen = null;
+      }
+      return;
+    }
+    if (scene === 'bombs') {
+      if (bombChosen) {
+        equippedBomb = bombChosen;
+        scene = 'playing';
+        bombChosen = null;
         startGameAudio();
       }
       return;
     }
     if (gameOver) return;
+    if (paused) return;       // freeze all gameplay updates while paused
 
     if (player.kind === 'chopper') {
       // ----- Chopper flight -----
@@ -1133,14 +1327,45 @@
           }
         }
       }
-      // Military building hit? Bombs are the intended counter — instant kill.
+      // Ground target hit?  Buildings die in one bomb (their reinforced
+      // walls were already chipped by bullet hits).  Ships absorb several
+      // bombs before sinking — each hit chips `bomb.type.damage` HP.
+      // Bombs with `blast > 0` also damage other ground targets within
+      // that radius (one extra HP each, ignores armour).
       if (!hit) {
+        const dmg = (b.type && b.type.damage) || 1;
+        const blast = (b.type && b.type.blast) || 0;
         for (const mb of militaryBuildings) {
           if (!mb.alive) continue;
-          const top = STREET_TOP_Y - mb.h;
+          const top = mb.groundY - mb.h;
           if (b.x >= mb.x - mb.w / 2 && b.x <= mb.x + mb.w / 2 && b.y >= top) {
-            mb.alive = false;
-            spawnExplosion(b.x, top + mb.h * 0.3, true);
+            if (mb.kind === 'ship') {
+              mb.hp -= dmg;
+              if (mb.hp <= 0) {
+                mb.alive = false;
+                spawnExplosion(b.x, top + mb.h * 0.4, true);
+              } else {
+                spawnExplosion(b.x, b.y, true);
+              }
+            } else {
+              mb.alive = false;
+              spawnExplosion(b.x, top + mb.h * 0.3, true);
+            }
+            // Blast splash: clip other ground targets within the radius.
+            if (blast > 0) {
+              for (const other of militaryBuildings) {
+                if (other === mb || !other.alive) continue;
+                const ox = other.x, oy = other.groundY - other.h / 2;
+                if (Math.hypot(ox - b.x, oy - b.y) <= blast) {
+                  if (other.kind === 'ship') {
+                    other.hp -= 1;
+                    if (other.hp <= 0) { other.alive = false; spawnExplosion(other.x, oy, true); }
+                  } else {
+                    other.alive = false; spawnExplosion(other.x, oy, true);
+                  }
+                }
+              }
+            }
             hit = true; break;
           }
         }
@@ -1263,8 +1488,8 @@
     const MIL_FIRE_RADIUS_SQ = MIL_FIRE_RADIUS * MIL_FIRE_RADIUS;
     const MIL_ALIGN_RAD = 0.10;
     for (const mb of militaryBuildings) {
-      const pivotX = mb.x;                                                // turret centred on building
-      const pivotY = STREET_TOP_Y - mb.h + MILITARY_TURRET_SPEC.bodyPivotFracY * mb.h;
+      const pivotX = mb.x;                                                // turret centred on body
+      const pivotY = mb.groundY - mb.h + MILITARY_TURRET_SPEC.bodyPivotFracY * mb.h;
       if (mb.alive) {
         const desired = Math.atan2(player.y - pivotY, player.x - pivotX);
         const diff = normalizeAngle(desired - mb.turretAngle);
@@ -1293,7 +1518,7 @@
         if (now - mb.lastSmokeAt > 140) {
           mb.lastSmokeAt = now;
           const px = mb.x + (Math.random() - 0.5) * mb.w * 0.5;
-          const py = STREET_TOP_Y - mb.h + 6 + Math.random() * 10;
+          const py = mb.groundY - mb.h + 6 + Math.random() * 10;
           particles.push({
             kind: 'smoke', x: px, y: py,
             vx: (Math.random() - 0.5) * 0.35,
@@ -1412,8 +1637,8 @@
       for (let j = militaryBuildings.length - 1; j >= 0; j--) {
         const mb = militaryBuildings[j];
         if (!mb.alive) continue;
-        const top = STREET_TOP_Y - mb.h;
-        if (b.x >= mb.x - mb.w / 2 && b.x <= mb.x + mb.w / 2 && b.y >= top && b.y <= STREET_TOP_Y) {
+        const top = mb.groundY - mb.h;
+        if (b.x >= mb.x - mb.w / 2 && b.x <= mb.x + mb.w / 2 && b.y >= top && b.y <= mb.groundY) {
           mb.hp -= 1;
           sfxHit(now);
           if (mb.hp <= 0) {
@@ -1479,8 +1704,66 @@
   }
 
   function drawSky() {
+    if (IS_NIGHT) { drawNightSky(); return; }
     if (!assets.sky) return;
     ctx.drawImage(assets.sky, 0, 0, W, H);
+  }
+
+  // Procedurally-generated starscape. A single deterministic tile of white
+  // dots is rasterised into an offscreen canvas once, then tiled across the
+  // viewport with parallax. White-on-transparent — no dark halo.
+  let starTileFar = null;
+  let starTileClose = null;
+  function buildStarTile(seed0, count, maxR) {
+    const tileW = 1280;
+    const tileH = H;
+    const c = document.createElement('canvas');
+    c.width = tileW;
+    c.height = tileH;
+    const g = c.getContext('2d');
+    g.fillStyle = '#FFFFFF';
+    // Tiny LCG for deterministic placement (no Math.random — same tile
+    // every time so we don't get re-shuffles on resize).
+    let s = seed0 | 0;
+    const rand = () => {
+      s = (s * 1103515245 + 12345) & 0x7fffffff;
+      return s / 0x7fffffff;
+    };
+    for (let i = 0; i < count; i++) {
+      const x = rand() * tileW;
+      const y = rand() * tileH;
+      const r = 0.3 + rand() * maxR;
+      const a = 0.35 + rand() * 0.6;
+      g.globalAlpha = a;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+    return c;
+  }
+  function drawNightSky() {
+    if (assets.skyNight) {
+      ctx.drawImage(assets.skyNight, 0, 0, W, H);
+    } else {
+      ctx.fillStyle = '#0b0f24';
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (!starTileFar) {
+      // +20% density on both layers (was 220 / 90).
+      starTileFar   = buildStarTile(0x5eed1a7,  264, 0.7);   // smaller / dimmer
+      starTileClose = buildStarTile(0xc0ffee23, 108, 1.4);   // fewer / brighter
+    }
+    // Stars sit "at infinity" — no parallax, screen-locked to the viewport so
+    // flight reads as motion through air, not through the star field.
+    function tileLayer(tile) {
+      const tw = tile.width;
+      for (let x = 0; x < W; x += tw) {
+        ctx.drawImage(tile, x, 0);
+      }
+    }
+    tileLayer(starTileFar);
+    tileLayer(starTileClose);
   }
 
   function drawClouds() {
@@ -1520,6 +1803,9 @@
   })();
 
   function drawStreet() {
+    // Ocean stages substitute the road for a water surface. Same anchor pattern
+    // (parallax-scrolled with the camera), no motion specks.
+    if (IS_OCEAN) { drawWater(); return; }
     // Street is anchored at STREET_TOP_Y. With the camera following the hero
     // vertically, the street drops out of view when the hero climbs into the
     // upper sky band — the ground reads as a real floor that you fly above.
@@ -1554,6 +1840,30 @@
     }
   }
 
+  // Open-water surface for the ocean world. Spans from the waterline down
+  // to the bottom of the canvas, full width, scrolling with the camera so
+  // ships rest on a moving surface rather than a static panel.
+  function drawWater() {
+    const waterTopScreenY = worldToScreenY(OCEAN_WATERLINE_Y);
+    if (waterTopScreenY > H) return;
+    const waterH = H - waterTopScreenY;
+    if (assets.water) {
+      const img = assets.water;
+      const renderH = waterH + 4;       // tiny overdraw so antialiasing doesn't leave a seam
+      const renderW = renderH * (img.width / img.height);
+      // Tile horizontally with a horizontal parallax of 1.0 (same as ground).
+      const offset = -((cameraX * 1.0) % renderW);
+      const startX = offset > 0 ? offset - renderW : offset;
+      for (let x = startX; x < W; x += renderW) {
+        ctx.drawImage(img, x, waterTopScreenY, renderW, renderH);
+      }
+    } else {
+      // Fallback solid teal while the texture loads.
+      ctx.fillStyle = '#1f8a8c';
+      ctx.fillRect(0, waterTopScreenY, W, waterH);
+    }
+  }
+
   function drawApartments() {
     for (const a of apartments) {
       if (!a.alive || !a.img) continue;
@@ -1570,18 +1880,22 @@
   // burnt, swap to the burnt body sprite and skip the turret entirely
   // (smoke + embers come from the update loop's particle emission).
   function drawMilitaryTurrets() {
-    if (!assets.militaryTurret) return;
+    // Either turret sprite is enough — city stages won't have ship turrets
+    // loaded and vice versa.
+    if (!assets.militaryTurret && !assets.shipTurret) return;
     for (const mb of militaryBuildings) {
       if (!mb.alive) continue;
       const sx = worldToScreenX(mb.x);
       if (sx + mb.w / 2 < -40 || sx - mb.w / 2 > W + 40) continue;
-      const bodyTop = worldToScreenY(STREET_TOP_Y - mb.h);
+      const bodyTop = worldToScreenY(mb.groundY - mb.h);
       if (bodyTop > H + 40) continue;
       const spec = MILITARY_TURRET_SPEC;
       const pivotSX = sx + (spec.bodyPivotFracX - 0.5) * mb.w;
       const pivotSY = bodyTop + spec.bodyPivotFracY * mb.h;
-      const img = assets.militaryTurret;
-      const trH = MILITARY_TURRET_H;
+      // Ocean ships use a different turret sprite, sized larger so the deck
+      // gun reads as a deck gun rather than a rooftop SAM.
+      const img = (mb.kind === 'ship' && assets.shipTurret) ? assets.shipTurret : assets.militaryTurret;
+      const trH = (mb.kind === 'ship') ? SHIP_TURRET_H : MILITARY_TURRET_H;
       const trW = trH * (img.width / img.height);
       ctx.save();
       ctx.translate(pivotSX, pivotSY);
@@ -1596,8 +1910,10 @@
     for (const mb of militaryBuildings) {
       const sx = worldToScreenX(mb.x);
       if (sx + mb.w / 2 < -40 || sx - mb.w / 2 > W + 40) continue;
-      const top = worldToScreenY(STREET_TOP_Y - mb.h);
+      const top = worldToScreenY(mb.groundY - mb.h);
       if (top > H + 40) continue;
+      // Ships skip the destroyed render — they sink and disappear. Buildings
+      // swap to a burnt sprite so the silhouette persists.
       const img = mb.alive ? mb.bodyImg : mb.burntImg;
       if (!img) continue;
       ctx.drawImage(img, sx - mb.w / 2, top, mb.w, mb.h);
@@ -1823,11 +2139,30 @@
   }
 
   function drawBombs() {
-    // Plain black dot for now — will be replaced with a bespoke sprite.
+    // Use the equipped bomb's sprite — fall back to a black dot if the
+    // sprite isn't loaded yet (rare; first-frame after Equip).
     for (const b of bombs) {
       const sx = worldToScreenX(b.x);
       const sy = worldToScreenY(b.y);
       if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+      const img = b.type && b.type.image;
+      if (img) {
+        // Cap the bomb's longest visible dimension at half the plane height
+        // (player sprite renders at 72 px tall → cap = 36). Bomb PNGs are
+        // very wide (Lance is ~5:1) so this prevents them dwarfing the plane.
+        const cap = 36;
+        const aspect = img.width / img.height;
+        const targetW = aspect >= 1 ? cap : cap * aspect;
+        const targetH = aspect >= 1 ? cap / aspect : cap;
+        // Point the bomb roughly in the direction it's flying.
+        const angle = Math.atan2(b.vy, b.vx);
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(angle);
+        ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
+        ctx.restore();
+        continue;
+      }
       ctx.save();
       ctx.fillStyle = '#000';
       ctx.beginPath();
@@ -2529,6 +2864,188 @@
     // button itself are self-explanatory.
   }
 
+  // Bomb-select carousel — same chrome / layout language as drawSelect, but
+  // for the bomb-load step that runs after the aircraft is chosen. Shows the
+  // bomb sprite, name + blurb, three stat bars (Damage / Blast / Speed),
+  // dots indicator, and an Equip button.
+  function drawBombSelect(now) {
+    clearBg();
+    drawSky();
+    if (!IS_NIGHT) drawClouds();
+    drawStreet();
+    drawApartments();
+    drawMilitaryBodies();
+
+    const cx = W / 2;
+    const bomb = MISSION_1_BOMBS[bombIndex];
+
+    const cardW   = 760;
+    const cardPad = 36;
+    const headerH = 32;
+    const headerGap = 22;
+    const spriteSlotH = 132;
+    const nameH   = 26;
+    const nameGap = 14;
+    const blurbGap = 6;
+    const blurbH = 18;
+    const statRowH = 26;
+    const statRowGap = 10;
+    const statsBlockH = statRowH * 3 + statRowGap * 2;
+    const statsGap = 22;
+    const dotsH   = 14;
+    const dotsGap = 22;
+    const btnH    = 52;
+    const btnGap  = 18;
+    const contentH = headerH + headerGap + spriteSlotH + nameGap + nameH + blurbGap + blurbH + statsGap + statsBlockH + dotsGap + dotsH + btnGap + btnH;
+    const cardH   = contentH + cardPad * 2;
+    const cardX   = Math.round(cx - cardW / 2);
+    const cardY   = Math.round((H - cardH) / 2);
+
+    // ----- Card surface -----
+    ctx.save();
+    ctx.shadowColor = 'rgba(2, 6, 17, 0.35)';
+    ctx.shadowBlur = 22;
+    ctx.shadowOffsetY = 6;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    roundRect(cardX, cardY, cardW, cardH, 14);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(20, 26, 36, 0.12)';
+    roundRect(cardX, cardY, cardW, cardH, 14);
+    ctx.stroke();
+    ctx.restore();
+
+    // ----- Header -----
+    let y = cardY + cardPad + headerH / 2;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '800 28px Inter, sans-serif';
+    ctx.fillStyle = '#0E1424';
+    ctx.fillText('Choose your bomb', cx, y);
+    y += headerH / 2 + headerGap;
+
+    // ----- Carousel arrows -----
+    const arrowW = 56, arrowH = 56;
+    const spriteAreaTop = y;
+    const arrowCenterY = spriteAreaTop + spriteSlotH / 2;
+    const arrowMargin = cardPad + 8;
+    const prevX = cardX + arrowMargin;
+    const nextX = cardX + cardW - arrowMargin - arrowW;
+    bombPrevRect = { x: prevX, y: arrowCenterY - arrowH / 2, w: arrowW, h: arrowH };
+    bombNextRect = { x: nextX, y: arrowCenterY - arrowH / 2, w: arrowW, h: arrowH };
+    drawCarouselArrow(bombPrevRect, 'left',  bombPrevHover);
+    drawCarouselArrow(bombNextRect, 'right', bombNextHover);
+
+    // ----- Bomb sprite -----
+    if (bomb.image) {
+      const img = bomb.image;
+      const slotW = 200;
+      const slotH = spriteSlotH;
+      const scale = Math.min(slotW / img.width, slotH / img.height);
+      const drawW = img.width  * scale;
+      const drawH = img.height * scale;
+      ctx.drawImage(img, Math.round(cx - drawW / 2), Math.round(spriteAreaTop + (slotH - drawH) / 2), drawW, drawH);
+    } else {
+      ctx.fillStyle = 'rgba(20, 26, 36, 0.08)';
+      roundRect(Math.round(cx - 100), spriteAreaTop + 10, 200, spriteSlotH - 20, 10);
+      ctx.fill();
+    }
+    y = spriteAreaTop + spriteSlotH + nameGap;
+
+    // ----- Name + blurb -----
+    ctx.font = '700 22px Inter, sans-serif';
+    ctx.fillStyle = '#0E1424';
+    ctx.fillText(bomb.name, cx, y + nameH / 2);
+    y += nameH + blurbGap;
+    ctx.font = '500 14px Inter, sans-serif';
+    ctx.fillStyle = 'rgba(20, 26, 36, 0.72)';
+    ctx.fillText(bomb.blurb, cx, y + blurbH / 2);
+    y += blurbH + statsGap;
+
+    // ----- Stat bars -----
+    const statsBlockX = cardX + cardPad + 80;
+    const statsBlockW = cardW - (cardPad + 80) * 2;
+    const labelW = 64;
+    const valueW = 44;
+    const barX = statsBlockX + labelW;
+    const barW = statsBlockW - labelW - valueW - 12;
+    const STATS = [
+      { key: 'damage',    label: 'Damage' },
+      { key: 'blast',     label: 'Blast'  },
+      { key: 'speedMult', label: 'Speed'  },
+    ];
+    for (let i = 0; i < STATS.length; i++) {
+      const s = STATS[i];
+      const val = bomb[s.key];
+      const max = BOMB_STAT_MAX[s.key];
+      const pct = Math.max(0, Math.min(1, val / max));
+      const rowY = y + i * (statRowH + statRowGap) + statRowH / 2;
+      ctx.font = '600 15px Inter, sans-serif';
+      ctx.fillStyle = '#1a2030';
+      ctx.textAlign = 'left';
+      ctx.fillText(s.label, statsBlockX, rowY);
+      const trackH = 10;
+      ctx.fillStyle = 'rgba(20, 26, 36, 0.10)';
+      roundRect(barX, rowY - trackH / 2, barW, trackH, 5);
+      ctx.fill();
+      ctx.fillStyle = '#cc2200';
+      roundRect(barX, rowY - trackH / 2, Math.max(4, barW * pct), trackH, 5);
+      ctx.fill();
+      ctx.font = '700 15px Inter, sans-serif';
+      ctx.fillStyle = '#0E1424';
+      ctx.textAlign = 'right';
+      // Blast renders as a px count; the others as plain numbers.
+      const display = s.key === 'speedMult' ? val.toFixed(1) + 'x' : String(val);
+      ctx.fillText(display, statsBlockX + statsBlockW, rowY);
+    }
+    ctx.textAlign = 'center';
+    y += statsBlockH + dotsGap;
+
+    // ----- Dots indicator -----
+    const dotR = 5;
+    const dotGap = 14;
+    const totalDotsW = MISSION_1_BOMBS.length * (dotR * 2) + (MISSION_1_BOMBS.length - 1) * dotGap;
+    let dotX = Math.round(cx - totalDotsW / 2 + dotR);
+    const dotsCenterY = y + dotsH / 2;
+    for (let i = 0; i < MISSION_1_BOMBS.length; i++) {
+      ctx.beginPath();
+      ctx.arc(dotX, dotsCenterY, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = i === bombIndex ? '#cc2200' : 'rgba(20, 26, 36, 0.22)';
+      ctx.fill();
+      dotX += dotR * 2 + dotGap;
+    }
+    y += dotsH + btnGap;
+
+    // ----- Equip button -----
+    const btnW = 240;
+    const btnX = Math.round(cx - btnW / 2);
+    const btnY = y;
+    bombEquipRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+    const pulse = 0.5 + 0.5 * Math.sin(now * 0.003);
+    ctx.save();
+    ctx.fillStyle = '#cc2200';
+    roundRect(btnX, btnY, btnW, btnH, 10);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    const borderAlpha = bombEquipHover ? 0.95 : 0.45 + 0.25 * pulse;
+    ctx.strokeStyle = `rgba(120, 20, 0, ${borderAlpha.toFixed(2)})`;
+    roundRect(btnX, btnY, btnW, btnH, 10);
+    ctx.stroke();
+    if (bombEquipHover) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.10)';
+      roundRect(btnX, btnY, btnW, btnH, 10);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '700 18px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Equip', btnX + btnW / 2, btnY + btnH / 2 + 1);
+    ctx.restore();
+  }
+
   // Single rounded-square carousel arrow with a chevron glyph.
   function drawCarouselArrow(rect, dir, hovering) {
     ctx.save();
@@ -2597,6 +3114,10 @@
       drawSelect(now);
       return;
     }
+    if (scene === 'bombs') {
+      drawBombSelect(now);
+      return;
+    }
     // Decay the camera shake every frame, even when update() is paused on
     // gameOver — otherwise the SHOT DOWN screen vibrates forever because
     // the explosion-on-death set shake to 7 and it never drains.
@@ -2614,7 +3135,7 @@
       ctx.translate(sx, sy);
     }
     drawSky();
-    drawClouds();
+    if (!IS_NIGHT) drawClouds();   // night worlds keep the sky clear of clouds
     drawStreet();
     drawApartments();
     drawMilitaryTurrets();  // military turret behind the building silhouette
@@ -2630,6 +3151,24 @@
     ctx.restore();
     drawHUD();
     drawGameOverOverlay();
+    if (paused && !gameOver) drawPauseOverlay();
+  }
+
+  function drawPauseOverlay() {
+    ctx.save();
+    // Dim everything underneath. Bright enough to read the HUD through it.
+    ctx.fillStyle = 'rgba(2, 6, 17, 0.62)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '900 56px Inter, sans-serif';
+    ctx.fillText('Paused', W / 2, H / 2 - 14);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
+    ctx.font = '600 16px Inter, sans-serif';
+    const isMobile = MODE === 'mobile';
+    ctx.fillText(isMobile ? 'tap to resume' : 'press P or Esc to resume', W / 2, H / 2 + 34);
+    ctx.restore();
   }
 
   // ---------- LOOP ----------
