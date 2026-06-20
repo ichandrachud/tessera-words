@@ -90,13 +90,18 @@
   const C = { bg: '#020611', text: '#FFFFFF', accent: '#D8523F' };
 
   // ---------- STAGE GEOMETRY ----------
+  // The stage is 6 screens WIDE and 4 screens TALL — the ground band at the
+  // bottom of the canvas stays put, and the sky extends 3 screen heights
+  // ABOVE the canvas top so planes have room to climb, dive, and loop.
   const STREET_H        = 72;
   const STREET_TOP_Y    = H - STREET_H;
   const APARTMENT_RENDER_H = 192;
+  const STAGE_TOP_Y     = -3 * H;        // ceiling sits 3 screens above the canvas
+  const STAGE_BOTTOM_Y  = H;             // bottom of the visible canvas
   // Player + enemies are confined to this Y range — never below the apartment
-  // tops (no clipping through buildings) and never quite off the top.
-  const FLIGHT_Y_MIN = 50;
-  const FLIGHT_Y_MAX = STREET_TOP_Y - APARTMENT_RENDER_H - 10;   // ~376
+  // tops (no clipping through buildings) and never above the stage ceiling.
+  const FLIGHT_Y_MIN = STAGE_TOP_Y + 50;                          // ≈ −2110
+  const FLIGHT_Y_MAX = STREET_TOP_Y - APARTMENT_RENDER_H - 10;    // ≈ 446
 
   // ---------- PLAYER STATE ----------
   // Free 2-D flight: world position (x, y), nose heading in radians (0 = right,
@@ -121,14 +126,17 @@
   }
 
   // ---------- CAMERA ----------
-  // Camera centres on the hero in X, clamped to the stage bounds. Y stays 0
-  // because the stage height equals the canvas height.
+  // Camera centres on the hero in BOTH axes, clamped to the stage bounds.
+  // The stage is now 4 screens tall (3 screens of sky above the canvas), so
+  // cameraY varies from STAGE_TOP_Y at the ceiling to 0 at the ground band.
   let cameraX = 0;
+  let cameraY = 0;
   function updateCamera() {
-    const target = player.x - W / 2;
-    cameraX = Math.max(0, Math.min(STAGE_W - W, target));
+    cameraX = Math.max(0, Math.min(STAGE_W - W, player.x - W / 2));
+    cameraY = Math.max(STAGE_TOP_Y, Math.min(0, player.y - H / 2));
   }
   function worldToScreenX(wx) { return wx - cameraX; }
+  function worldToScreenY(wy) { return wy - cameraY; }
 
   // ---------- STAGE LAYOUT ----------
   // Deterministic placement: a row of apartments edge-to-edge across the
@@ -157,17 +165,22 @@
       cursor += w;
     }
 
-    // --- Enemy roster — 8 planes evenly distributed across the stage.
+    // --- Enemy roster — 8 planes spread across the stage in BOTH axes so
+    // the hero meets them at varied altitudes instead of always head-on.
     const N_ENEMIES = 8;
     for (let i = 0; i < N_ENEMIES; i++) {
       const pool = assets.enemies;
       const img = pool[Math.floor(Math.random() * pool.length)];
-      const startX = 900 + (i + 0.5) * (STAGE_W - 1100) / N_ENEMIES;
-      const startY = FLIGHT_Y_MIN + 40 + Math.random() * (FLIGHT_Y_MAX - FLIGHT_Y_MIN - 80);
+      const startX = 1200 + (i + 0.5) * (STAGE_W - 1400) / N_ENEMIES;
+      // Bias toward the upper sky so the hero (which spawns mid-height) has
+      // to climb to engage — gives the player time to settle into the
+      // controls before the first interception.
+      const yFrac = 0.1 + Math.random() * 0.75;
+      const startY = FLIGHT_Y_MIN + yFrac * (FLIGHT_Y_MAX - FLIGHT_Y_MIN);
       enemies.push({
         x: startX, y: startY,
         heading: Math.PI,             // start facing left (toward the hero)
-        throttle: 0.55,
+        throttle: 0.45,
         hp: 3,
         alive: true,
         img,
@@ -272,14 +285,15 @@
   function spawnCloud(now) {
     if (!assets.clouds.length) return;
     const img = assets.clouds[Math.floor(Math.random() * assets.clouds.length)];
-    const skyTop = 24, skyBottom = Math.max(skyTop + 1, FLIGHT_Y_MIN + 80);
-    const y     = skyTop + Math.random() * (skyBottom - skyTop);
-    const depth = (y - skyTop) / (skyBottom - skyTop);
-    const targetH    = 130 - depth * 95;
-    const alpha      = 0.85 - depth * 0.65;
-    const parallax   = 0.32 - depth * 0.26;     // 0.32 near, 0.06 far
-    // World X: place clouds across the whole stage at spawn, then they drift
-    // with subtle parallax (their *apparent* position differs from cameraX).
+    // Place clouds anywhere in the now-tall stage Y range. Depth is rolled
+    // independently so size / alpha / parallax don't all snap to one band.
+    const yMin = STAGE_TOP_Y + 40;
+    const yMax = STREET_TOP_Y - 200;
+    const y = yMin + Math.random() * (yMax - yMin);
+    const depth = Math.random();                                  // 0 = near, 1 = far
+    const targetH  = 140 - depth * 100;                            // 140 near → 40 far
+    const alpha    = 0.85 - depth * 0.60;                          // 0.85 near → 0.25 far
+    const parallax = 0.32 - depth * 0.26;                          // 0.32 near → 0.06 far
     const worldX = cameraX + W + 200 + Math.random() * 200;
     clouds.push({ img, worldX, y, targetH, alpha, parallax, spawnedCamX: cameraX });
   }
@@ -347,10 +361,14 @@
     }
 
     // ----- Enemies (chase + fire) -----
-    const WAKE_RANGE_X = 1.5 * W;          // start chasing when hero is within 1.5 screens
-    const FIRE_RANGE   = 520;
-    const ALIGN_RAD    = 0.18;             // ~10° heading alignment to fire
-    const ENEMY_TURN_RATE = 1.6;           // rad / sec — bit slower than hero so player can outturn
+    // Tuned so the hero (TURN_RATE 2.4) significantly out-turns the enemies
+    // and can get on their six. Enemies fire only on tight alignment from
+    // closer range — they were sitting on the hero's tail and never giving
+    // the player a clear shot back.
+    const WAKE_RANGE_X = 1.2 * W;          // wake at 1.2 screens (was 1.5)
+    const FIRE_RANGE   = 360;              // closer (was 520)
+    const ALIGN_RAD    = 0.10;             // ~5.7° (was ~10°)
+    const ENEMY_TURN_RATE = 0.9;           // rad / sec (was 1.6) — hero can out-turn easily
 
     for (let i = enemies.length - 1; i >= 0; i--) {
       const en = enemies[i];
@@ -496,32 +514,34 @@
   function drawClouds() {
     const sorted = clouds.slice().sort((a, b) => a.y - b.y);
     for (const c of sorted) {
-      const sx = c.worldX - cameraX * c.parallax;
-      const sxFinal = sx - (cameraX - c.spawnedCamX) * (1 - c.parallax);
       const aspect = c.img.width / c.img.height;
       const w = c.targetH * aspect;
-      // We simplified above — just place cloud at (worldX - cameraX*parallax).
       const screenX = c.worldX - cameraX * c.parallax;
+      const screenY = c.y - cameraY * c.parallax;
       ctx.save();
       ctx.globalAlpha = c.alpha;
-      ctx.drawImage(c.img, screenX - w / 2, c.y - c.targetH / 2, w, c.targetH);
+      ctx.drawImage(c.img, screenX - w / 2, screenY - c.targetH / 2, w, c.targetH);
       ctx.restore();
     }
   }
 
   function drawStreet() {
-    // Street is PINNED to the bottom of the canvas and does NOT scroll —
-    // perspective stays fixed while the apartments slide across the top edge.
+    // Street is anchored in WORLD coords at STREET_TOP_Y. With the camera
+    // following the hero vertically, the street drops out of view when the
+    // hero climbs into the upper sky band — which is what we want; the
+    // ground reads as a real floor that you fly above.
+    const streetScreenY = worldToScreenY(STREET_TOP_Y);
+    if (streetScreenY > H) return;                  // ground is below the viewport
     if (!assets.street) {
       ctx.fillStyle = '#252028';
-      ctx.fillRect(0, STREET_TOP_Y, W, STREET_H);
+      ctx.fillRect(0, streetScreenY, W, STREET_H);
       return;
     }
     const img = assets.street;
     const tileH = STREET_H;
     const tileW = tileH * (img.width / img.height);
     for (let x = 0; x < W; x += tileW) {
-      ctx.drawImage(img, x, STREET_TOP_Y, tileW + 1, tileH);
+      ctx.drawImage(img, x, streetScreenY, tileW + 1, tileH);
     }
   }
 
@@ -530,7 +550,8 @@
       if (!a.alive || !a.img) continue;
       const sx = worldToScreenX(a.x);
       if (sx + a.w / 2 < -10 || sx - a.w / 2 > W + 10) continue;
-      const top = STREET_TOP_Y - a.h;
+      const top = worldToScreenY(STREET_TOP_Y - a.h);
+      if (top > H + 10) continue;
       ctx.drawImage(a.img, sx - a.w / 2, top, a.w, a.h);
     }
   }
@@ -558,11 +579,12 @@
   // tracking left feels natural rather than inverted.
   function drawAircraft(img, worldX, worldY, heading, targetH) {
     const sx = worldToScreenX(worldX);
-    if (sx < -120 || sx > W + 120) return;
+    const sy = worldToScreenY(worldY);
+    if (sx < -120 || sx > W + 120 || sy < -120 || sy > H + 120) return;
     const aspect = img.width / img.height;
     const targetW = targetH * aspect;
     ctx.save();
-    ctx.translate(sx, worldY);
+    ctx.translate(sx, sy);
     // If heading is in the left half (nose pointing left), apply both a
     // rotation and a vertical flip so the plane stays right-side-up while
     // still pointing in its travel direction.
@@ -596,21 +618,22 @@
   function drawBullets() {
     for (const b of bullets) {
       const sx = worldToScreenX(b.x);
-      if (sx < -20 || sx > W + 20) continue;
+      const sy = worldToScreenY(b.y);
+      if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
       ctx.save();
       if (b.owner === 'player') {
         ctx.shadowColor = 'rgba(255, 220, 90, 0.9)';
         ctx.shadowBlur = 8;
         ctx.fillStyle = 'rgba(255, 235, 130, 0.95)';
-        ctx.fillRect(sx - 7, b.y - 2, 14, 4);
+        ctx.fillRect(sx - 7, sy - 2, 14, 4);
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(sx - 3, b.y - 0.75, 6, 1.5);
+        ctx.fillRect(sx - 3, sy - 0.75, 6, 1.5);
       } else {
         ctx.shadowColor = '#ff5555';
         ctx.shadowBlur = 6;
         ctx.fillStyle = '#ff8888';
-        ctx.fillRect(sx - 5, b.y - 2, 10, 4);
+        ctx.fillRect(sx - 5, sy - 2, 10, 4);
       }
       ctx.restore();
     }
@@ -620,13 +643,14 @@
     for (const p of particles) {
       const t = Math.max(0, p.life / p.life0);
       const sx = worldToScreenX(p.x);
-      if (sx < -60 || sx > W + 60) continue;
+      const sy = worldToScreenY(p.y);
+      if (sx < -60 || sx > W + 60 || sy < -60 || sy > H + 60) continue;
       ctx.save();
       if (p.kind === 'flash') {
         ctx.globalAlpha = Math.pow(t, 1.5);
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(sx, p.y, p.r0 * (1.2 - 0.2 * t), 0, Math.PI * 2);
+        ctx.arc(sx, sy, p.r0 * (1.2 - 0.2 * t), 0, Math.PI * 2);
         ctx.fill();
       } else if (p.kind === 'ring') {
         const r = p.r0 * (1 - t) + 6;
@@ -634,13 +658,13 @@
         ctx.strokeStyle = p.color;
         ctx.lineWidth = 4 * t + 1;
         ctx.beginPath();
-        ctx.arc(sx, p.y, r, 0, Math.PI * 2);
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
         ctx.stroke();
       } else if (p.kind === 'smoke') {
         ctx.globalAlpha = t * 0.55;
         ctx.fillStyle = p.color;
         ctx.beginPath();
-        ctx.arc(sx, p.y, p.r0 * (2.2 - 1.2 * t), 0, Math.PI * 2);
+        ctx.arc(sx, sy, p.r0 * (2.2 - 1.2 * t), 0, Math.PI * 2);
         ctx.fill();
       } else {
         ctx.globalAlpha = Math.pow(t, 0.55);
@@ -649,7 +673,7 @@
         ctx.fillStyle = p.color;
         const r = (p.r0 || 3) * t + 0.8;
         ctx.beginPath();
-        ctx.arc(sx, p.y, r, 0, Math.PI * 2);
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -695,28 +719,30 @@
     ctx.fillStyle = targets > 0 ? '#FF6B5C' : '#5DD39E';
     ctx.fillText('TARGETS  ' + targets, rx, 22);
 
-    // Minimap — thin bar across the top showing stage progress.
-    const mmX = W * 0.30, mmW = W * 0.40, mmY = 18, mmH = 8;
-    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    // Minimap — small rectangular plan of the whole stage. Width axis is X,
+    // height axis is Y (sky at top, ground at bottom). Apartments hug the
+    // bottom edge; enemies float at their flight altitude; player is green.
+    const STAGE_H_TOTAL = STAGE_BOTTOM_Y - STAGE_TOP_Y;
+    const mmX = W * 0.30, mmW = W * 0.40, mmY = 14, mmH = 40;
+    const mapWX = (wx) => mmX + (wx / STAGE_W) * mmW;
+    const mapWY = (wy) => mmY + ((wy - STAGE_TOP_Y) / STAGE_H_TOTAL) * mmH;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.fillRect(mmX, mmY, mmW, mmH);
-    // Apartment dots
+    // Ground line.
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fillRect(mmX, mapWY(STREET_TOP_Y), mmW, 1);
     for (const a of apartments) {
       if (!a.alive) continue;
-      const px = mmX + (a.x / STAGE_W) * mmW;
       ctx.fillStyle = '#FFB347';
-      ctx.fillRect(px - 1, mmY + 2, 2, mmH - 4);
+      ctx.fillRect(mapWX(a.x) - 1, mapWY(STREET_TOP_Y) - 2, 2, 2);
     }
-    // Enemy dots
     for (const en of enemies) {
       if (!en.alive) continue;
-      const px = mmX + (en.x / STAGE_W) * mmW;
       ctx.fillStyle = '#FF6B5C';
-      ctx.fillRect(px - 1.5, mmY + 1, 3, mmH - 2);
+      ctx.fillRect(mapWX(en.x) - 1.5, mapWY(en.y) - 1.5, 3, 3);
     }
-    // Player dot
-    const pPx = mmX + (player.x / STAGE_W) * mmW;
     ctx.fillStyle = '#5DD39E';
-    ctx.fillRect(pPx - 1.5, mmY, 3, mmH);
+    ctx.fillRect(mapWX(player.x) - 2, mapWY(player.y) - 2, 4, 4);
 
     ctx.restore();
   }
