@@ -201,10 +201,11 @@
     if (!assets.tankBodies.length || !assets.trucks.length) return;
     stageBuilt = true;
 
-    // --- Apartments (ground targets) — packed edge-to-edge across the stage.
-    let cursor = 180;
+    // --- Apartments (background scenery) — packed edge-to-edge across the
+    // FULL width of the stage so the very left edge is never empty.
+    let cursor = -120;                    // start a touch off the left so the strip extends past the bound
     let lastImg = null;
-    while (cursor < STAGE_W - 180) {
+    while (cursor < STAGE_W + 120) {
       const pool = assets.apartments;
       let img;
       do { img = pool[Math.floor(Math.random() * pool.length)]; }
