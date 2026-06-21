@@ -560,6 +560,12 @@
   const PLAYER_ANG_DAMP  = 4.5;          // how fast angVel decays to 0 when input released
   const PLAYER_ANG_MAX_DESKTOP = 1.9;    // max rate of turn (rad/sec)
   const PLAYER_ANG_MAX_MOBILE  = 1.5;
+  // Heading flip — at the moment the plane passes through ±90° we mirror
+  // the sprite so it never appears canopy-down. A latched state machine
+  // with a 0.12 hysteresis band on cos(heading) prevents oscillation
+  // right at the threshold.
+  player.flipped = false;                 // true = sprite mirrored (facing left), false = facing right
+  const FLIP_HYSTERESIS = 0.12;
   // Chopper movement: always upright, fixed speed in 8 directions. Roughly
   // matches a plane's cruise speed (no throttle band).
   const CHOPPER_SPEED = 0.075;  // px / ms
@@ -1475,6 +1481,13 @@
       if (player.angVel < -angMax) player.angVel = -angMax;
       player.heading += player.angVel * dts;
       player.heading = normalizeAngle(player.heading);
+      // Latch the flip state. Once flipped, we need cos(heading) to swing
+      // back past +0.12 before un-flipping; vice versa to flip.
+      {
+        const c = Math.cos(player.heading);
+        if (player.flipped && c >  FLIP_HYSTERESIS) player.flipped = false;
+        else if (!player.flipped && c < -FLIP_HYSTERESIS) player.flipped = true;
+      }
 
       const sp = playerSpeed();
       player.x += Math.cos(player.heading) * sp * dt;
@@ -1760,6 +1773,13 @@
       if (en.angVel < -ENEMY_ANG_MAX) en.angVel = -ENEMY_ANG_MAX;
       en.heading += en.angVel * dts2;
       en.heading = normalizeAngle(en.heading);
+      // Same latched flip state on enemies so they snap-mirror too.
+      {
+        if (en.flipped === undefined) en.flipped = Math.cos(en.heading) < 0;
+        const c = Math.cos(en.heading);
+        if (en.flipped && c >  FLIP_HYSTERESIS) en.flipped = false;
+        else if (!en.flipped && c < -FLIP_HYSTERESIS) en.flipped = true;
+      }
 
       // Throttle: cruise / dash both ~40 % lower than the previous values.
       const targetThrottle = dist > 600 ? 0.50 : 0.32;
@@ -2536,7 +2556,7 @@
   // Draw a plane or chopper in world coords. Planes rotate with heading and
   // get a nose propeller; choppers stay upright and get a horizontal rotor,
   // optionally mirrored to face their direction of travel.
-  function drawAircraft(img, worldX, worldY, heading, targetH, kind, facing, flashAlpha, visualFlip) {
+  function drawAircraft(img, worldX, worldY, heading, targetH, kind, facing, flashAlpha, flipped) {
     const sx = worldToScreenX(worldX);
     const sy = worldToScreenY(worldY);
     if (sx < -120 || sx > W + 120 || sy < -120 || sy > H + 120) return;
@@ -2550,10 +2570,16 @@
       drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawRotor(lastFrameNow, 0, -targetH * 0.36, targetW);
     } else {
-      // Continuous rotation — plane rotates by heading every frame, going
-      // canopy-down at the top of a loop like a real aircraft. No flip,
-      // no barrel-roll squash.
-      ctx.rotate(heading);
+      // Instant horizontal flip past ±90°: when the latched `flipped` state
+      // is on, the sprite mirrors and the rotation reverses by π so the nose
+      // still points along heading. The plane is briefly edge-on at the
+      // crossing so the snap is least visible there.
+      if (flipped) {
+        ctx.scale(-1, 1);
+        ctx.rotate(heading - Math.PI);
+      } else {
+        ctx.rotate(heading);
+      }
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
       drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
@@ -2587,7 +2613,7 @@
     }
     if (alpha < 1) ctx.save();
     if (alpha < 1) ctx.globalAlpha = alpha;
-    drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing, 0);
+    drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing, 0, player.flipped);
     if (alpha < 1) ctx.restore();
   }
 
@@ -2597,7 +2623,7 @@
       const flash = (en.flashUntil && en.flashUntil > lastFrameNow)
         ? (en.flashUntil - lastFrameNow) / 60
         : 0;
-      drawAircraft(en.img, en.x, en.y, en.heading, 54, undefined, undefined, flash);
+      drawAircraft(en.img, en.x, en.y, en.heading, 54, undefined, undefined, flash, en.flipped);
     }
   }
 
