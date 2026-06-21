@@ -1131,9 +1131,21 @@
   const ENEMY_HIT_R      = 36;
 
   function spawnPlayerBullet() {
-    // Muzzle at the plane's nose — translate forward in heading direction.
     const muzzleDist = 26;
-    // Fire along the smoothed aim heading, in the plane's world direction
+    if (player.kind === 'chopper') {
+      // Chopper always fires horizontally in its current facing direction.
+      const dir = player.facing || 1;
+      bullets.push({
+        x: player.x + dir * muzzleDist,
+        y: player.y,
+        vx: dir * BULLET_SPEED,
+        vy: 0,
+        owner: 'player',
+        life: BULLET_LIFE_MS,
+      });
+      return;
+    }
+    // Plane: fire along the smoothed aim heading, in world direction
     // (mirror inverts cos/sin).
     const aim = player.aimHeading;
     const fs = player.mirror ? -1 : 1;
@@ -2413,26 +2425,35 @@
   function drawWheelSpin(k, now) {
     if (k.vx === 0) return;
     const speed = Math.abs(k.vx);
-    // Rotation rate: 1 px/ms gives ~3 full turns / second.
-    const angle = (now * speed * 0.018 * Math.sign(k.vx)) % (Math.PI * 2);
-    const r = k.h * 0.13;
+    // Rotation rate: much faster than before so the spin actually reads.
+    const angle = (now * speed * 0.045 * Math.sign(k.vx)) % (Math.PI * 2);
+    const r = k.h * 0.16;
     const wheelOffsetsX = [-k.w * 0.28, k.w * 0.28];
     const wheelY = k.h * 0.32;
     ctx.save();
-    ctx.strokeStyle = 'rgba(245, 245, 245, 0.55)';
-    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = 'rgba(245, 245, 245, 0.85)';
+    ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
     for (const wx of wheelOffsetsX) {
       ctx.save();
       ctx.translate(wx, wheelY);
       ctx.rotate(angle);
-      // Two perpendicular spokes — quick wagon-wheel read.
+      // Three crossed spokes — clearer wagon-wheel read.
       ctx.beginPath();
       ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
       ctx.moveTo(0, -r); ctx.lineTo(0, r);
+      ctx.moveTo(-r * 0.7, -r * 0.7); ctx.lineTo(r * 0.7, r * 0.7);
       ctx.stroke();
       ctx.restore();
     }
+    // Horizontal streak under the wheels to sell forward motion.
+    ctx.globalAlpha = 0.30;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    const streakY = wheelY + r + 1;
+    const streakLen = k.w * 0.55;
+    ctx.beginPath();
+    ctx.ellipse(0, streakY, streakLen / 2, 1.4, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -2520,6 +2541,29 @@
       if (t.flashUntil && t.flashUntil > lastFrameNow) {
         drawHitFlash(t.bodyImg, sx - t.w / 2, top, t.w, t.h, (t.flashUntil - lastFrameNow) / 60);
       }
+      // Track idle animation — tanks are stationary but tracks crawl as if
+      // the engine is running. Spokes rotate at a constant slow rate so
+      // every tank reads as 'alive' from a distance.
+      const angle = (lastFrameNow * 0.005) % (Math.PI * 2);
+      const r = t.h * 0.18;
+      const wheelOffsetsX = [-t.w * 0.32, 0, t.w * 0.32];
+      const wheelY = top + t.h * 0.78;
+      ctx.save();
+      ctx.translate(sx, 0);
+      ctx.strokeStyle = 'rgba(245, 245, 245, 0.75)';
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      for (const wx of wheelOffsetsX) {
+        ctx.save();
+        ctx.translate(wx, wheelY);
+        ctx.rotate(angle);
+        ctx.beginPath();
+        ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+        ctx.moveTo(0, -r); ctx.lineTo(0, r);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
     }
   }
 
