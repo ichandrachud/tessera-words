@@ -1291,6 +1291,14 @@
   let flashPulseUntil = 0;
   let flashPulseAt = 0;
   let flashPulseMs = 120;
+  // Damage flash — each hit on the player darkens the screen briefly so
+  // the player feels each hit registered. Replaces the old low-HP vignette.
+  let damageFlashUntil = 0;
+  const DAMAGE_FLASH_MS = 140;
+  function damageFlash(now) { damageFlashUntil = Math.max(damageFlashUntil, now + DAMAGE_FLASH_MS); }
+  // Continuous smoke trail starts when the player drops below 60% HP and
+  // grows denser as HP approaches zero. Last emission timestamp.
+  let playerSmokeAt = 0;
   function bombFlash(now, amplitude, ms) {
     flashPulseAt = now;
     flashPulseMs = ms;
@@ -1508,6 +1516,32 @@
     updateClouds(now, dt);
     updateEngine();
     updateVehicleAmbient();
+
+    // Damage smoke — starts at 60% HP, denser as HP approaches zero.
+    // Spawn cadence interpolates from 220 ms (light wisp at 60% HP) to
+    // ~45 ms (continuous trail at near-zero HP).
+    {
+      const hpFrac = player.hp / player.maxHp;
+      if (hpFrac < 0.6 && player.hp > 0) {
+        const dmg = (0.6 - hpFrac) / 0.6;            // 0 → 1 as HP drops
+        const interval = 220 - dmg * 175;            // 220 → 45 ms
+        if (now - playerSmokeAt > interval) {
+          playerSmokeAt = now;
+          // Emit just behind the plane, opposite the heading.
+          const tailX = player.x - Math.cos(player.heading) * 26;
+          const tailY = player.y - Math.sin(player.heading) * 26;
+          particles.push({
+            kind: 'smoke', x: tailX, y: tailY,
+            vx: (Math.random() - 0.5) * 0.35,
+            vy: -0.10 - Math.random() * 0.25,
+            life0: 600 + Math.random() * 400,
+            life:  600 + Math.random() * 400,
+            r0: 2.5 + dmg * 5,
+            color: `rgba(${50 + Math.floor(dmg * 40)}, 48, 44, ${(0.35 + dmg * 0.4).toFixed(2)})`,
+          });
+        }
+      }
+    }
 
 
     // ----- Bonus pickups -----
@@ -2044,6 +2078,7 @@
           player.y += (b.vy / bsp) * 5;
           cameraShake = Math.max(cameraShake, 6);
           hitpause(now, 60);
+          damageFlash(now);
           break;
         }
       }
@@ -2061,6 +2096,7 @@
           player.hp = Math.max(0, player.hp - 22);
           player.invulnUntil = now + 500;
           hitpause(now, 150);
+          damageFlash(now);
         }
       }
     }
@@ -2719,20 +2755,6 @@
   }
 
   function drawHUD() {
-    // Low-HP warning — soft red vignette around the canvas edge, pulsing at
-    // ~1 Hz. Fires below 25% HP, intensifies as HP approaches zero.
-    if (player.hp > 0 && player.hp < player.maxHp * 0.25) {
-      const intensity = 1 - (player.hp / (player.maxHp * 0.25));
-      const pulse = 0.55 + 0.45 * Math.sin(lastFrameNow * 0.005);
-      const a = intensity * pulse * 0.55;
-      const grad = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.62);
-      grad.addColorStop(0, 'rgba(255, 60, 60, 0)');
-      grad.addColorStop(1, `rgba(255, 60, 60, ${a.toFixed(2)})`);
-      ctx.save();
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
-      ctx.restore();
-    }
     ctx.save();
     ctx.font = '700 11px Inter, sans-serif';
     ctx.textBaseline = 'middle';
@@ -2846,7 +2868,7 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const isLastMission = MISSION_INDEX + 1 >= MISSIONS.length;
-    const headline = !win ? 'SHOT DOWN'
+    const headline = !win ? 'GAME OVER'
       : isLastMission ? 'CAMPAIGN COMPLETE' : 'MISSION COMPLETE';
     ctx.fillStyle = win ? '#5DD39E' : '#FF6B5C';
     ctx.font = '900 56px Inter, sans-serif';
@@ -3755,6 +3777,14 @@
       ctx.save();
       ctx.globalAlpha = 0.20 * t;
       ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+    // Damage flash — momentary darken when the player takes a hit.
+    if (damageFlashUntil && now < damageFlashUntil) {
+      const t = (damageFlashUntil - now) / DAMAGE_FLASH_MS;
+      ctx.save();
+      ctx.fillStyle = `rgba(0, 0, 0, ${(0.32 * t).toFixed(2)})`;
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
     }
