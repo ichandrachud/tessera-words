@@ -142,12 +142,19 @@
   // ---------- MISSION 1 — AIRCRAFT LINEUP ----------
   // Player choice: 4 planes + 1 chopper. Stats are gameplay values used by the
   // aircraft-select screen (and, downstream, by the live game).
+  // Speed variants: speedMult applied directly to CRUISE_SPEED so the spread
+  // is felt at the controls. Tempest (heavy) at 0.80 → Maverick (super-fast)
+  // at 1.45 ≈ 81 % swing between slowest and fastest, plenty of feel. The
+  // `speed` field stays for the in-UI numeric readout in the carousel.
   const MISSION_1_AIRCRAFT = [
-    { name: 'Tsunami', file: './assets/planes-v2/Tsunami.png', hp: 100, speed: 100, bombs: 4, kind: 'plane',   blurb: 'Balanced strike fighter.' },
-    { name: 'Cyclone', file: './assets/planes-v2/Cyclone.png', hp:  80, speed: 130, bombs: 3, kind: 'plane',   blurb: 'Fast attacker, light armour.' },
-    { name: 'Tempest', file: './assets/planes-v2/Tempest.png', hp: 150, speed:  80, bombs: 5, kind: 'plane',   blurb: 'Heavy bomber, slow but tough.' },
-    { name: 'Zephyr',  file: './assets/planes-v2/Zephyr.png',  hp:  70, speed: 140, bombs: 2, kind: 'plane',   blurb: 'Light & nimble, fragile.' },
-    { name: 'Hornet',  file: './assets/choppers/Hornet.png',   hp: 110, speed:  70, bombs: 4, kind: 'chopper', blurb: 'Hovers; close-range support.' },
+    { name: 'Tsunami',  file: './assets/planes-v2/Tsunami.png',  hp: 100, speed: 100, speedMult: 1.00, bombs: 4, kind: 'plane', blurb: 'Balanced strike fighter.' },
+    { name: 'Cyclone',  file: './assets/planes-v2/Cyclone.png',  hp:  80, speed: 130, speedMult: 1.15, bombs: 3, kind: 'plane', blurb: 'Fast attacker, light armour.' },
+    { name: 'Tempest',  file: './assets/planes-v2/Tempest.png',  hp: 150, speed:  80, speedMult: 0.80, bombs: 5, kind: 'plane', blurb: 'Heavy bomber, slow but tough.' },
+    { name: 'Zephyr',   file: './assets/planes-v2/Zephyr.png',   hp:  70, speed: 140, speedMult: 1.25, bombs: 2, kind: 'plane', blurb: 'Light & nimble, fragile.' },
+    // Maverick reuses the Zephyr sprite as a stand-in until a dedicated
+    // sprite lands; stats are tuned so it still feels distinct (fastest
+    // plane in the sky, but the HP makes one mistake fatal).
+    { name: 'Maverick', file: './assets/planes-v2/Zephyr.png', hp:  60, speed: 160, speedMult: 1.45, bombs: 2, kind: 'plane', blurb: 'Glass cannon — fastest in the sky.' },
   ];
   // Stat-bar normalisation maxes — keeps bar widths comparable across aircraft.
   const STAT_MAX = { hp: 200, speed: 150, bombs: 6 };
@@ -643,6 +650,7 @@
     alive: true,
     kind: 'plane',              // 'plane' or 'chopper' — set when an aircraft is chosen
     facing: 1,                  // chopper-only: +1 = faces right, -1 = faces left (sprite flipped)
+    aircraftSpeed: 1,           // per-aircraft variant multiplier; locked at selection
     speedMult: 1,               // bonus stacking — +0.15 per gasoline pickup
   };
   // Flight inertia — angular velocity (rad/sec) carries between frames so
@@ -669,7 +677,7 @@
   const FLIP_RESET_COS = -0.80;           // must climb back above this to re-arm
   const FLIP_RESET_SIN = 0.25;            // or pitch past this from horizontal
   function playerSpeed() {
-    return CRUISE_SPEED * player.speedMult;
+    return CRUISE_SPEED * player.aircraftSpeed * player.speedMult;
   }
 
   // ---------- CAMERA ----------
@@ -897,7 +905,10 @@
       militaryBuildings.push({
         x, w, h,
         bodyImg,
-        burntImg: null,           // ships don't have a burnt variant — they just sink/explode
+        // Burning ships keep the same body sprite (no dedicated burnt asset);
+        // the burnt-state code path handles continuous smoke + embers, and
+        // setting burntImg = bodyImg keeps the silhouette visible.
+        burntImg: bodyImg,
         alive: true,
         hp: SHIP_HP,
         turretAngle: -Math.PI / 2,
@@ -1443,12 +1454,19 @@
     if (scene === 'select') {
       if (aircraftChosen) {
         // Wire the chosen sprite + kind into the live game, then advance to
-        // bomb-select.  Audio waits until after bombs are equipped.
+        // bomb-select. Aircraft-specific speedMult drives how fast this plane
+        // cruises (CRUISE_SPEED × aircraftSpeed × bonus speedMult).
+        // Throttle starts at 1 so engine audio reads cruising from frame 1.
         if (aircraftChosen.image) assets.player = aircraftChosen.image;
         player.kind = aircraftChosen.kind;
         player.heading = 0;
-        player.throttle = 0;
+        player.throttle = 1;
         player.facing = 1;
+        player.aircraftSpeed = aircraftChosen.speedMult || 1;
+        if (aircraftChosen.hp) {
+          player.maxHp = aircraftChosen.hp;
+          player.hp = aircraftChosen.hp;
+        }
         scene = 'bombs';
         aircraftChosen = null;
       }
@@ -1735,11 +1753,11 @@
               mb.hp -= dmg;
               mb.flashUntil = now + 60;
               if (mb.hp <= 0) {
+                // Ship is finished but lingers as a smouldering wreck —
+                // small impact flash, no big boom, no debris cloud.
                 mb.alive = false;
-                spawnExplosion(b.x, top + mb.h * 0.4, true);
-                bombFlash(now, 12, 220);
-                spawnBombDebris(b.x, top + mb.h * 0.5, 12);
-                hitpause(now, 120);
+                spawnExplosion(b.x, b.y, false);
+                hitpause(now, 40);
               } else {
                 spawnExplosion(b.x, b.y, true);
                 bombFlash(now, 9, 160);
@@ -2139,8 +2157,14 @@
           sfxHit(now);
           if (mb.hp <= 0) {
             mb.alive = false;
-            spawnExplosion(b.x, top + mb.h * 0.3, true);
-            hitpause(now, 80);
+            // Ships skip the big boom — they linger as smouldering wrecks.
+            // Buildings still get the dramatic kill effect.
+            if (mb.kind !== 'ship') {
+              spawnExplosion(b.x, top + mb.h * 0.3, true);
+              hitpause(now, 80);
+            } else {
+              spawnExplosion(b.x, b.y, false);
+            }
           } else {
             spawnExplosion(b.x, b.y, false);
             hitpause(now, 25);
