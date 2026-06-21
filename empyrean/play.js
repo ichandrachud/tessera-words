@@ -397,10 +397,13 @@
     if (now - lastGunSfxAt < 70) return;
     lastGunSfxAt = now;
     const t = audioCtx.currentTime;
+    // Pitch-shift ±5% per shot so a held trigger doesn't read as one
+    // repeating tone — kills machine-gun fatigue.
+    const pitch = 0.95 + Math.random() * 0.10;
     const osc = audioCtx.createOscillator();
     osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(720, t);
-    osc.frequency.exponentialRampToValueAtTime(180, t + 0.05);
+    osc.frequency.setValueAtTime(720 * pitch, t);
+    osc.frequency.exponentialRampToValueAtTime(180 * pitch, t + 0.05);
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0.07, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
@@ -1245,6 +1248,33 @@
   const CAMERA_LEAD_X = 160;             // ~12.5% of W
   const CAMERA_LEAD_Y = 70;
   const CAMERA_LEAD_SMOOTH = 0.07;       // exponential ease per frame
+  // Bomb / boss flash — when set, a translucent white rect is painted over
+  // the whole canvas, fading from 0.18 alpha to 0 over the window. Sells
+  // a real, screen-eating explosion.
+  let flashPulseUntil = 0;
+  let flashPulseAt = 0;
+  let flashPulseMs = 120;
+  function bombFlash(now, amplitude, ms) {
+    flashPulseAt = now;
+    flashPulseMs = ms;
+    flashPulseUntil = now + ms;
+    cameraShake = Math.max(cameraShake, amplitude);
+  }
+  function spawnBombDebris(x, y, count) {
+    const colors = ['#7a5a3a', '#5a4a2a', '#9c7a52', '#3a2a1a'];
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 0.4 + Math.random() * 0.9;
+      particles.push({
+        kind: 'spark', x, y,
+        vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.3,
+        life0: 700 + Math.random() * 500,
+        life:  700 + Math.random() * 500,
+        r0: 2 + Math.random() * 3,
+        color: colors[Math.floor(Math.random() * colors.length)],
+      });
+    }
+  }
   // Lives system — player starts with this many (incl. the one currently in
   // the air). Each death consumes one and respawns; game over fires only when
   // all lives are gone.
@@ -1471,6 +1501,8 @@
         if (b.x >= t.x - t.w / 2 && b.x <= t.x + t.w / 2 && b.y >= top) {
           t.alive = false;
           spawnExplosion(b.x, top + t.h * 0.4, true);
+          bombFlash(now, 11, 200);
+          spawnBombDebris(b.x, top + t.h * 0.4, 10);
           hitpause(now, 120);
           hit = true; break;
         }
@@ -1483,6 +1515,8 @@
           if (b.x >= k.x - k.w / 2 && b.x <= k.x + k.w / 2 && b.y >= top) {
             k.alive = false;
             spawnExplosion(b.x, top + k.h * 0.4, true);
+            bombFlash(now, 11, 200);
+            spawnBombDebris(b.x, top + k.h * 0.4, 8);
             hitpause(now, 120);
             hit = true; break;
           }
@@ -1506,14 +1540,20 @@
               if (mb.hp <= 0) {
                 mb.alive = false;
                 spawnExplosion(b.x, top + mb.h * 0.4, true);
+                bombFlash(now, 12, 220);
+                spawnBombDebris(b.x, top + mb.h * 0.5, 12);
                 hitpause(now, 120);
               } else {
                 spawnExplosion(b.x, b.y, true);
+                bombFlash(now, 9, 160);
+                spawnBombDebris(b.x, b.y, 6);
                 hitpause(now, 70);
               }
             } else {
               mb.alive = false;
               spawnExplosion(b.x, top + mb.h * 0.3, true);
+              bombFlash(now, 12, 220);
+              spawnBombDebris(b.x, top + mb.h * 0.5, 12);
               hitpause(now, 120);
             }
             // Blast splash: clip other ground targets within the radius.
@@ -1571,7 +1611,27 @@
 
     for (let i = enemies.length - 1; i >= 0; i--) {
       const en = enemies[i];
-      if (!en.alive) continue;
+      if (!en.alive) {
+        // Crashing — drift forward + downward, emit smoke ~every 90 ms.
+        if (en.crashUntil && now < en.crashUntil) {
+          en.crashVy += 0.0015 * dt;                  // gravity
+          en.x += en.crashVx * dt;
+          en.y += en.crashVy * dt;
+          if (now - (en.crashSmokeAt || 0) > 90) {
+            en.crashSmokeAt = now;
+            particles.push({
+              kind: 'smoke', x: en.x, y: en.y,
+              vx: (Math.random() - 0.5) * 0.4,
+              vy: -0.25 - Math.random() * 0.3,
+              life0: 900 + Math.random() * 400,
+              life:  900 + Math.random() * 400,
+              r0: 5 + Math.random() * 4,
+              color: 'rgba(60, 55, 50, 0.55)',
+            });
+          }
+        }
+        continue;
+      }
 
       const dx0 = player.x - en.x, dy0 = player.y - en.y;
       const dist = Math.hypot(dx0, dy0);
@@ -1770,6 +1830,12 @@
           sfxHit(now);
           if (en.hp <= 0) {
             en.alive = false; spawnExplosion(en.x, en.y, true);
+            // Stamp crash state so the smoke trail keeps following the
+            // wreckage as it falls.
+            en.crashUntil = now + 1100;
+            en.crashSmokeAt = 0;
+            en.crashVx = Math.cos(en.heading) * 0.04;
+            en.crashVy = 0.04;
             hitpause(now, 90);
           } else {
             spawnExplosion(b.x, b.y, false);
@@ -1864,6 +1930,12 @@
           player.hp = Math.max(0, player.hp - 8);
           spawnExplosion(b.x, b.y, false);
           player.invulnUntil = now + 320;
+          // Knockback — push player along the bullet's velocity vector so
+          // the hit registers physically, not just numerically.
+          const bsp = Math.hypot(b.vx, b.vy) || 1;
+          player.x += (b.vx / bsp) * 5;
+          player.y += (b.vy / bsp) * 5;
+          cameraShake = Math.max(cameraShake, 6);
           hitpause(now, 60);
           break;
         }
@@ -1875,6 +1947,10 @@
         if (dx * dx + dy * dy < rr * rr) {
           spawnExplosion(en.x, en.y, true);
           en.alive = false;
+          en.crashUntil = now + 1100;
+          en.crashSmokeAt = 0;
+          en.crashVx = Math.cos(en.heading) * 0.04;
+          en.crashVy = 0.04;
           player.hp = Math.max(0, player.hp - 22);
           player.invulnUntil = now + 500;
           hitpause(now, 150);
@@ -2376,9 +2452,16 @@
 
   function drawPlayer(now) {
     if (!assets.player) return;
-    // Brief flicker while invulnerable.
-    if (now <= player.invulnUntil && Math.floor(now / 60) % 2 === 0) return;
+    // Smooth ghosted invulnerability — alpha pulses between 0.25 and 0.85
+    // during the invuln window. Reads less jarring than the old 8 Hz flicker.
+    let alpha = 1;
+    if (now <= player.invulnUntil) {
+      alpha = 0.25 + 0.30 * (1 + Math.sin(now * 0.024));
+    }
+    if (alpha < 1) ctx.save();
+    if (alpha < 1) ctx.globalAlpha = alpha;
     drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing);
+    if (alpha < 1) ctx.restore();
   }
 
   function drawEnemies() {
@@ -3538,6 +3621,16 @@
     drawBombs();
     drawParticles();
     ctx.restore();
+    // Bomb / boss flash — translucent white pulse over the whole canvas
+    // that fades from 0.20 alpha to 0 across the window.
+    if (flashPulseUntil && now < flashPulseUntil) {
+      const t = (flashPulseUntil - now) / flashPulseMs;
+      ctx.save();
+      ctx.globalAlpha = 0.20 * t;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
     drawHUD();
     drawGameOverOverlay();
     if (paused && !gameOver) drawPauseOverlay();
