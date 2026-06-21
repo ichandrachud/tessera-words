@@ -560,12 +560,17 @@
   const PLAYER_ANG_DAMP  = 4.5;          // how fast angVel decays to 0 when input released
   const PLAYER_ANG_MAX_DESKTOP = 1.9;    // max rate of turn (rad/sec)
   const PLAYER_ANG_MAX_MOBILE  = 1.5;
-  // Heading flip — at the moment the plane passes through ±90° we mirror
-  // the sprite so it never appears canopy-down. A latched state machine
-  // with a 0.12 hysteresis band on cos(heading) prevents oscillation
-  // right at the threshold.
-  player.flipped = false;                 // true = sprite mirrored (facing left), false = facing right
-  const FLIP_HYSTERESIS = 0.12;
+  // Mirror flip — when the plane reaches horizontal-canopy-down (heading
+  // ≈ ±π and sin(heading) ≈ 0), it instantly rotates 180° around its
+  // longitudinal axis so the canopy is back on top. The plane keeps
+  // flying the same world direction. Each full loop completes with two
+  // such flips, like the player's sketch.
+  player.mirror = false;
+  player.flipLatch = false;
+  const FLIP_TRIGGER_COS_MAX = -0.95;     // cos(heading) below this triggers
+  const FLIP_TRIGGER_SIN_MAX = 0.12;      // |sin(heading)| must be under this
+  const FLIP_RESET_COS = -0.80;           // must climb back above this to re-arm
+  const FLIP_RESET_SIN = 0.25;            // or pitch past this from horizontal
   // Chopper movement: always upright, fixed speed in 8 directions. Roughly
   // matches a plane's cruise speed (no throttle band).
   const CHOPPER_SPEED = 0.075;  // px / ms
@@ -1128,16 +1133,16 @@
   function spawnPlayerBullet() {
     // Muzzle at the plane's nose — translate forward in heading direction.
     const muzzleDist = 26;
-    // Fire along the smoothed aim heading, not the instantaneous nose. On
-    // mobile, aim trails the nose by ~150 ms so quick redirects of the
-    // touch don't fling every bullet at the new target.
+    // Fire along the smoothed aim heading, in the plane's world direction
+    // (mirror inverts cos/sin).
     const aim = player.aimHeading;
-    const mx = player.x + Math.cos(aim) * muzzleDist;
-    const my = player.y + Math.sin(aim) * muzzleDist;
+    const fs = player.mirror ? -1 : 1;
+    const mx = player.x + fs * Math.cos(aim) * muzzleDist;
+    const my = player.y + fs * Math.sin(aim) * muzzleDist;
     bullets.push({
       x: mx, y: my,
-      vx: Math.cos(aim) * BULLET_SPEED,
-      vy: Math.sin(aim) * BULLET_SPEED,
+      vx: fs * Math.cos(aim) * BULLET_SPEED,
+      vy: fs * Math.sin(aim) * BULLET_SPEED,
       owner: 'player',
       life: BULLET_LIFE_MS,
     });
@@ -1164,11 +1169,12 @@
     lastBombAt = now;
     const sp = playerSpeed();
     const mult = equippedBomb ? equippedBomb.speedMult : 1;
+    const fs = player.mirror ? -1 : 1;
     bombs.push({
       x: player.x,
       y: player.y + 14,
-      vx: Math.cos(player.heading) * sp * 0.6 * mult,
-      vy: Math.sin(player.heading) * sp * 0.6 * mult + 0.05,
+      vx: fs * Math.cos(player.heading) * sp * 0.6 * mult,
+      vy: fs * Math.sin(player.heading) * sp * 0.6 * mult + 0.05,
       type: equippedBomb,
     });
   }
@@ -1455,43 +1461,55 @@
       const dts = dt / 1000;
       let desiredAng = 0;
       const angMax = (MODE === 'mobile') ? PLAYER_ANG_MAX_MOBILE : PLAYER_ANG_MAX_DESKTOP;
+      // When the sprite is mirrored, the player's intuitive "up" maps to the
+      // opposite angular direction internally — invert the input sign.
+      const inputSign = player.mirror ? -1 : 1;
       if (MODE === 'mobile' && touchTarget) {
-        // Mobile: aim toward finger; desired turn rate scales with how far
-        // off-angle the finger is, capped at angMax.
         const wx = touchTarget.x + cameraX;
         const wy = touchTarget.y + cameraY;
-        const desired = Math.atan2(wy - player.y, wx - player.x);
-        const diff = normalizeAngle(desired - player.heading);
-        // Proportional control: turn at full rate when far from target,
-        // ease off as the nose comes onto the bearing.
+        // Touch target is in world coords. effectiveHeading = heading + π
+        // when mirrored, so convert the world bearing to internal heading.
+        const worldDir = Math.atan2(wy - player.y, wx - player.x);
+        const internalDesired = player.mirror ? normalizeAngle(worldDir - Math.PI) : worldDir;
+        const diff = normalizeAngle(internalDesired - player.heading);
         desiredAng = Math.max(-angMax, Math.min(angMax, diff * 3.0));
         player.throttle = 1;
       } else {
-        // Desktop: ↑ / ↓ steer ; ← / → adjust throttle.
-        if (keys.ArrowUp)    desiredAng -= angMax;
-        if (keys.ArrowDown)  desiredAng += angMax;
+        if (keys.ArrowUp)    desiredAng -= angMax * inputSign;
+        if (keys.ArrowDown)  desiredAng += angMax * inputSign;
         if (keys.ArrowRight) player.throttle = Math.min(1, player.throttle + THROTTLE_RATE * dt / 1000);
         if (keys.ArrowLeft)  player.throttle = Math.max(0, player.throttle - THROTTLE_RATE * dt / 1000);
       }
-      // Ease angVel toward desired, OR damp toward zero if no input.
       const rate = (desiredAng === 0) ? PLAYER_ANG_DAMP : PLAYER_ANG_ACCEL;
       player.angVel += (desiredAng - player.angVel) * Math.min(1, rate * dts);
-      // Cap residual angVel so a long hold doesn't accumulate beyond the max.
       if (player.angVel >  angMax) player.angVel =  angMax;
       if (player.angVel < -angMax) player.angVel = -angMax;
       player.heading += player.angVel * dts;
       player.heading = normalizeAngle(player.heading);
-      // Latch the flip state. Once flipped, we need cos(heading) to swing
-      // back past +0.12 before un-flipping; vice versa to flip.
+
+      // Trigger: horizontal + canopy-down → instant mirror flip.
+      // Latched so it fires once per crossing. Reset condition pulls heading
+      // back out of the trigger zone before re-arming.
       {
-        const c = Math.cos(player.heading);
-        if (player.flipped && c >  FLIP_HYSTERESIS) player.flipped = false;
-        else if (!player.flipped && c < -FLIP_HYSTERESIS) player.flipped = true;
+        const cosH = Math.cos(player.heading);
+        const sinH = Math.sin(player.heading);
+        if (!player.flipLatch && cosH < FLIP_TRIGGER_COS_MAX && Math.abs(sinH) < FLIP_TRIGGER_SIN_MAX) {
+          player.mirror = !player.mirror;
+          player.heading = 0;                          // reset to forward in new mirror frame
+          player.angVel = -player.angVel;              // preserve world angular momentum
+          player.flipLatch = true;
+        }
+        if (cosH > FLIP_RESET_COS || Math.abs(sinH) > FLIP_RESET_SIN) {
+          player.flipLatch = false;
+        }
       }
 
+      // Velocity uses world direction. effectiveHeading = heading + π when
+      // mirrored — simplifies to flipping sign on cos/sin.
       const sp = playerSpeed();
-      player.x += Math.cos(player.heading) * sp * dt;
-      player.y += Math.sin(player.heading) * sp * dt;
+      const flipSign = player.mirror ? -1 : 1;
+      player.x += flipSign * Math.cos(player.heading) * sp * dt;
+      player.y += flipSign * Math.sin(player.heading) * sp * dt;
 
       // Stage-edge reflection — bounce instead of stalling against the wall.
       if (player.x < 30) {
@@ -1588,10 +1606,13 @@
       spawnPlayerBullet();
       sfxGun(now);
       lastShotAt = now;
-      // Recoil — push the plane back against the firing direction by a couple
-      // of pixels and give the camera a tiny flinch. Sells the gun's weight.
-      player.x -= Math.cos(player.heading) * 2.4;
-      player.y -= Math.sin(player.heading) * 2.4;
+      // Recoil — push the plane back against the firing direction by a
+      // couple of pixels (in the world frame, so flip when mirrored).
+      {
+        const fs = player.mirror ? -1 : 1;
+        player.x -= fs * Math.cos(player.heading) * 2.4;
+        player.y -= fs * Math.sin(player.heading) * 2.4;
+      }
       cameraShake = Math.max(cameraShake, 1.6);
     }
 
@@ -1773,13 +1794,6 @@
       if (en.angVel < -ENEMY_ANG_MAX) en.angVel = -ENEMY_ANG_MAX;
       en.heading += en.angVel * dts2;
       en.heading = normalizeAngle(en.heading);
-      // Same latched flip state on enemies so they snap-mirror too.
-      {
-        if (en.flipped === undefined) en.flipped = Math.cos(en.heading) < 0;
-        const c = Math.cos(en.heading);
-        if (en.flipped && c >  FLIP_HYSTERESIS) en.flipped = false;
-        else if (!en.flipped && c < -FLIP_HYSTERESIS) en.flipped = true;
-      }
 
       // Throttle: cruise / dash both ~40 % lower than the previous values.
       const targetThrottle = dist > 600 ? 0.50 : 0.32;
@@ -2570,8 +2584,10 @@
       drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawRotor(lastFrameNow, 0, -targetH * 0.36, targetW);
     } else {
-      // Continuous rotation — plane rotates by heading every frame, going
-      // canopy-down at the top of a loop like a real aircraft.
+      // `flipped` here is the player's mirror state. Apply horizontal scale
+      // first so the rotation composes correctly — sprite faces left when
+      // mirrored, with the same rotation in its local frame.
+      if (flipped) ctx.scale(-1, 1);
       ctx.rotate(heading);
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
       drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
@@ -2606,7 +2622,7 @@
     }
     if (alpha < 1) ctx.save();
     if (alpha < 1) ctx.globalAlpha = alpha;
-    drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing, 0, player.flipped);
+    drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing, 0, player.mirror);
     if (alpha < 1) ctx.restore();
   }
 
