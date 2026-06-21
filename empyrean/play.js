@@ -895,9 +895,22 @@
       y: (clientY - rect.top)  / rect.height * H,
     };
   }
+  // Try to expand into the OS's fullscreen mode on the first user gesture.
+  // This collapses the mobile address bar entirely, which dvh-based sizing
+  // can't do on its own. Safari iOS supports it from 16.4+, Chrome Android
+  // earlier. Wrapped in try/catch because some browsers reject silently.
+  function tryEnterFullscreen() {
+    if (MODE !== 'mobile') return;
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitEnterFullscreen;
+    if (!req) return;
+    try { const p = req.call(el); if (p && p.catch) p.catch(() => {}); } catch (_) { /* nothing */ }
+  }
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
     ensureAudio();                                  // wake the audio context on first touch
+    tryEnterFullscreen();
     const t = e.changedTouches[0];
     if (!t) return;
     const p = canvasFromClient(t.clientX, t.clientY);
