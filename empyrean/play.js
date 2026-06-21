@@ -552,11 +552,14 @@
     facing: 1,                  // chopper-only: +1 = faces right, -1 = faces left (sprite flipped)
     speedMult: 1,               // bonus stacking — +0.15 per gasoline pickup
   };
-  // Ghost-trail ring buffer — recent (x, y, heading) samples used to paint
-  // fading copies of the plane during hard turns.
-  const ghostTrail = [];
-  let ghostSampleAt = 0;
-  const GHOST_MAX = 6;
+  // Flight inertia — angular velocity (rad/sec) carries between frames so
+  // turns ease in / out instead of starting and stopping abruptly. Same model
+  // is reused for enemy planes so the whole sky moves like aircraft.
+  player.angVel = 0;
+  const PLAYER_ANG_ACCEL = 7.0;          // how fast angVel ramps to desired
+  const PLAYER_ANG_DAMP  = 4.5;          // how fast angVel decays to 0 when input released
+  const PLAYER_ANG_MAX_DESKTOP = 1.9;    // max rate of turn (rad/sec)
+  const PLAYER_ANG_MAX_MOBILE  = 1.5;
   // Chopper movement: always upright, fixed speed in 8 directions. Roughly
   // matches a plane's cruise speed (no throttle band).
   const CHOPPER_SPEED = 0.075;  // px / ms
@@ -1418,25 +1421,39 @@
       if (player.y > FLIGHT_Y_MAX)   player.y = FLIGHT_Y_MAX;
     } else {
       // ----- Plane flight -----
+      // Angular velocity model — every frame we pick a desired turn rate
+      // (from input) and ease the live angVel toward it. When no input is
+      // given, angVel decays gently to zero. Heading then integrates from
+      // angVel. The result is a plane that builds into a turn, holds it,
+      // and rolls out of it on a curve instead of snapping to angles.
+      const dts = dt / 1000;
+      let desiredAng = 0;
+      const angMax = (MODE === 'mobile') ? PLAYER_ANG_MAX_MOBILE : PLAYER_ANG_MAX_DESKTOP;
       if (MODE === 'mobile' && touchTarget) {
-        // Mobile: nose drifts toward the finger at a gentle rate (instead of
-        // snapping), so bullets keep flying forward of the plane's current
-        // heading rather than instantly diverting to the new touch point.
-        // Throttle pegs to full while a finger is down.
+        // Mobile: aim toward finger; desired turn rate scales with how far
+        // off-angle the finger is, capped at angMax.
         const wx = touchTarget.x + cameraX;
         const wy = touchTarget.y + cameraY;
         const desired = Math.atan2(wy - player.y, wx - player.x);
         const diff = normalizeAngle(desired - player.heading);
-        const maxTurn = MOBILE_TURN_RATE * (dt / 1000);
-        player.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
+        // Proportional control: turn at full rate when far from target,
+        // ease off as the nose comes onto the bearing.
+        desiredAng = Math.max(-angMax, Math.min(angMax, diff * 3.0));
         player.throttle = 1;
       } else {
         // Desktop: ↑ / ↓ steer ; ← / → adjust throttle.
-        if (keys.ArrowUp)    player.heading -= TURN_RATE * (dt / 1000);
-        if (keys.ArrowDown)  player.heading += TURN_RATE * (dt / 1000);
+        if (keys.ArrowUp)    desiredAng -= angMax;
+        if (keys.ArrowDown)  desiredAng += angMax;
         if (keys.ArrowRight) player.throttle = Math.min(1, player.throttle + THROTTLE_RATE * dt / 1000);
         if (keys.ArrowLeft)  player.throttle = Math.max(0, player.throttle - THROTTLE_RATE * dt / 1000);
       }
+      // Ease angVel toward desired, OR damp toward zero if no input.
+      const rate = (desiredAng === 0) ? PLAYER_ANG_DAMP : PLAYER_ANG_ACCEL;
+      player.angVel += (desiredAng - player.angVel) * Math.min(1, rate * dts);
+      // Cap residual angVel so a long hold doesn't accumulate beyond the max.
+      if (player.angVel >  angMax) player.angVel =  angMax;
+      if (player.angVel < -angMax) player.angVel = -angMax;
+      player.heading += player.angVel * dts;
       player.heading = normalizeAngle(player.heading);
 
       const sp = playerSpeed();
@@ -1474,13 +1491,6 @@
     updateEngine();
     updateVehicleAmbient();
 
-    // Ghost-trail sample — record (x, y, heading) every ~45 ms. drawPlayer
-    // paints these as fading copies when the player is in motion.
-    if (now - ghostSampleAt > 45) {
-      ghostSampleAt = now;
-      ghostTrail.push({ x: player.x, y: player.y, heading: player.heading, t: now });
-      while (ghostTrail.length > GHOST_MAX) ghostTrail.shift();
-    }
 
     // ----- Bonus pickups -----
     // Each pickup hovers in place with a subtle vertical bob. Player overlap
@@ -1639,8 +1649,9 @@
     const WAKE_RANGE_X = 1.2 * W;
     const FIRE_RANGE   = 360;
     const ALIGN_RAD    = 0.10;
-    const ENEMY_TURN_RATE = 0.9;
-    const ENEMY_WANDER_MIX = 0.40;          // fraction of heading set by wander vs pure chase
+    const ENEMY_ANG_MAX   = 1.2;            // rad/sec — max turn rate
+    const ENEMY_ANG_ACCEL = 4.0;            // rate angVel approaches desired
+    const ENEMY_WANDER_MIX = 0.30;
 
     // Cap concurrent awake enemies at 2: only the two closest live enemies
     // within wake range are activated each frame. When one dies, the next
@@ -1682,18 +1693,26 @@
       const dist = Math.hypot(dx0, dy0);
       if (!en.awake) continue;
 
-      // Refresh wander offset every 0.8-1.6 s — small ±0.6 rad bias added to
-      // the pure pursuit heading. ENEMY_WANDER_MIX controls how strongly it
-      // pulls the enemy off the hero's line.
+      // Refresh wander offset every 1.6-2.8 s — slower than before so the
+      // squadron doesn't twitch. ENEMY_WANDER_MIX is also gentler.
       if (now >= en.wanderUntil) {
-        en.wanderAngle = (Math.random() - 0.5) * 1.2;       // ±0.6 rad
-        en.wanderUntil = now + 800 + Math.random() * 800;
+        en.wanderAngle = (Math.random() - 0.5) * 0.9;       // ±0.45 rad
+        en.wanderUntil = now + 1600 + Math.random() * 1200;
       }
       const pursuit = Math.atan2(dy0, dx0);
       const desired = pursuit + en.wanderAngle * ENEMY_WANDER_MIX;
       const diff = normalizeAngle(desired - en.heading);
-      const maxTurn = ENEMY_TURN_RATE * (dt / 1000);
-      en.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
+      // Angular-velocity model: scale desired turn-rate with the heading
+      // error (proportional), cap at ENEMY_ANG_MAX, then ease angVel toward
+      // it. Same physics as the player — enemies build into and roll out
+      // of their turns instead of snapping to bearings.
+      const dts2 = dt / 1000;
+      if (en.angVel === undefined) en.angVel = 0;
+      const desiredAng = Math.max(-ENEMY_ANG_MAX, Math.min(ENEMY_ANG_MAX, diff * 2.2));
+      en.angVel += (desiredAng - en.angVel) * Math.min(1, ENEMY_ANG_ACCEL * dts2);
+      if (en.angVel >  ENEMY_ANG_MAX) en.angVel =  ENEMY_ANG_MAX;
+      if (en.angVel < -ENEMY_ANG_MAX) en.angVel = -ENEMY_ANG_MAX;
+      en.heading += en.angVel * dts2;
       en.heading = normalizeAngle(en.heading);
 
       // Throttle: cruise / dash both ~40 % lower than the previous values.
@@ -2126,7 +2145,9 @@
       const screenX = c.worldX - cameraX * c.parallax;
       const screenY = c.worldY - cameraY * c.parallax;
       ctx.save();
-      ctx.globalAlpha = c.alpha;
+      // Cap each cloud at 35% of its baseline opacity so they read as soft
+      // atmosphere rather than dominant foreground objects.
+      ctx.globalAlpha = c.alpha * 0.35;
       ctx.drawImage(c.img, screenX - w / 2, screenY - c.targetH / 2, w, c.targetH);
       ctx.restore();
     }
@@ -2512,19 +2533,6 @@
 
   function drawPlayer(now) {
     if (!assets.player) return;
-    // Ghost trail — only when the player is actually displacing (skip on
-    // chopper hover). Each sample fades the older it is.
-    if (player.kind !== 'chopper' && ghostTrail.length > 1) {
-      for (let i = 0; i < ghostTrail.length - 1; i++) {
-        const g = ghostTrail[i];
-        const age = (now - g.t) / 260;                // 0 fresh -> 1 old
-        if (age >= 1) continue;
-        ctx.save();
-        ctx.globalAlpha = (1 - age) * 0.22;
-        drawAircraft(assets.player, g.x, g.y, g.heading, 72, player.kind, player.facing);
-        ctx.restore();
-      }
-    }
     // Smooth ghosted invulnerability — alpha pulses between 0.25 and 0.85
     // during the invuln window. Reads less jarring than the old 8 Hz flicker.
     let alpha = 1;
