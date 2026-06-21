@@ -564,8 +564,15 @@
   let cameraX = 0;
   let cameraY = 0;
   function updateCamera() {
-    cameraX = Math.max(0, Math.min(STAGE_W - W, player.x - W / 2));
-    cameraY = Math.max(STAGE_TOP_Y, Math.min(0, player.y - H / 2));
+    // Lead the camera in the direction the plane is heading so the player
+    // sees on-coming targets a moment earlier. The lead component eases
+    // toward the new direction so heading changes don't jerk the camera.
+    const desiredLeadX = Math.cos(player.heading) * CAMERA_LEAD_X;
+    const desiredLeadY = Math.sin(player.heading) * CAMERA_LEAD_Y;
+    cameraLeadX += (desiredLeadX - cameraLeadX) * CAMERA_LEAD_SMOOTH;
+    cameraLeadY += (desiredLeadY - cameraLeadY) * CAMERA_LEAD_SMOOTH;
+    cameraX = Math.max(0, Math.min(STAGE_W - W, player.x + cameraLeadX - W / 2));
+    cameraY = Math.max(STAGE_TOP_Y, Math.min(0, player.y + cameraLeadY - H / 2));
   }
   function worldToScreenX(wx) { return wx - cameraX; }
   function worldToScreenY(wy) { return wy - cameraY; }
@@ -1226,6 +1233,18 @@
   const SPLASH_MIN_MS = 3000;          // hold the splash for at least this long
   loadImage('./splash.jpg').then(img => { assets.splash = img; });
   let gameOver = false;
+  // Game-feel ROUND 1 state ------------------------------------------------
+  // Hit-pause: when set, update() short-circuits until `now >= frozenUntil`.
+  // Sold by every impact: 30-50 ms for bullets, 100-150 ms for bombs / big
+  // collisions. Render keeps ticking so the player sees the frozen moment.
+  let frozenUntil = 0;
+  function hitpause(now, ms) { frozenUntil = Math.max(frozenUntil, now + ms); }
+  // Camera lead: smooth offset added to the camera target in the direction
+  // the plane is heading. Lets the player see incoming threats earlier.
+  let cameraLeadX = 0, cameraLeadY = 0;
+  const CAMERA_LEAD_X = 160;             // ~12.5% of W
+  const CAMERA_LEAD_Y = 70;
+  const CAMERA_LEAD_SMOOTH = 0.07;       // exponential ease per frame
   // Lives system — player starts with this many (incl. the one currently in
   // the air). Each death consumes one and respawns; game over fires only when
   // all lives are gone.
@@ -1307,6 +1326,7 @@
     }
     if (gameOver) return;
     if (paused) return;       // freeze all gameplay updates while paused
+    if (now < frozenUntil) return;   // hit-pause: brief freeze on impact moments
 
     if (player.kind === 'chopper') {
       // ----- Chopper flight -----
@@ -1424,6 +1444,11 @@
       spawnPlayerBullet();
       sfxGun(now);
       lastShotAt = now;
+      // Recoil — push the plane back against the firing direction by a couple
+      // of pixels and give the camera a tiny flinch. Sells the gun's weight.
+      player.x -= Math.cos(player.heading) * 2.4;
+      player.y -= Math.sin(player.heading) * 2.4;
+      cameraShake = Math.max(cameraShake, 1.6);
     }
 
     // ----- Bomb (B key on desktop / double-tap on mobile) -----
@@ -1446,6 +1471,7 @@
         if (b.x >= t.x - t.w / 2 && b.x <= t.x + t.w / 2 && b.y >= top) {
           t.alive = false;
           spawnExplosion(b.x, top + t.h * 0.4, true);
+          hitpause(now, 120);
           hit = true; break;
         }
       }
@@ -1457,6 +1483,7 @@
           if (b.x >= k.x - k.w / 2 && b.x <= k.x + k.w / 2 && b.y >= top) {
             k.alive = false;
             spawnExplosion(b.x, top + k.h * 0.4, true);
+            hitpause(now, 120);
             hit = true; break;
           }
         }
@@ -1475,15 +1502,19 @@
           if (b.x >= mb.x - mb.w / 2 && b.x <= mb.x + mb.w / 2 && b.y >= top) {
             if (mb.kind === 'ship') {
               mb.hp -= dmg;
+              mb.flashUntil = now + 60;
               if (mb.hp <= 0) {
                 mb.alive = false;
                 spawnExplosion(b.x, top + mb.h * 0.4, true);
+                hitpause(now, 120);
               } else {
                 spawnExplosion(b.x, b.y, true);
+                hitpause(now, 70);
               }
             } else {
               mb.alive = false;
               spawnExplosion(b.x, top + mb.h * 0.3, true);
+              hitpause(now, 120);
             }
             // Blast splash: clip other ground targets within the radius.
             if (blast > 0) {
@@ -1595,10 +1626,17 @@
       const maxTurn = TANK_TURRET_TURN_RATE * (dt / 1000);
       t.turretAngle += Math.max(-maxTurn, Math.min(maxTurn, diff));
 
-      if (Math.abs(diff) < TANK_ALIGN_RAD &&
-          Math.abs(player.x - pivotX) < TANK_FIRE_RANGE_X &&
-          now >= t.fireAt) {
-        // Muzzle is at the end of the rotated barrel.
+      // Telegraph the shot: when aim + range are both satisfied and the
+      // cooldown has elapsed, start a 250 ms windup. The muzzle pulse is
+      // rendered during this window and the actual bullet leaves the barrel
+      // only after the windup expires.
+      const tankReady = Math.abs(diff) < TANK_ALIGN_RAD &&
+                        Math.abs(player.x - pivotX) < TANK_FIRE_RANGE_X &&
+                        now >= t.fireAt;
+      if (tankReady && !t.windupUntil) {
+        t.windupUntil = now + 250;
+      }
+      if (t.windupUntil && now >= t.windupUntil) {
         const barrelLen = t.w * 0.55;
         const mx = pivotX + Math.cos(t.turretAngle) * barrelLen;
         const my = pivotY + Math.sin(t.turretAngle) * barrelLen;
@@ -1610,6 +1648,7 @@
           life: BULLET_LIFE_MS,
         });
         t.fireAt = now + 1400 + Math.random() * 900;
+        t.windupUntil = 0;
       }
     }
 
@@ -1632,9 +1671,13 @@
         const dxToPlayer = player.x - pivotX;
         const dyToPlayer = player.y - pivotY;
         const distSqToPlayer = dxToPlayer * dxToPlayer + dyToPlayer * dyToPlayer;
-        if (Math.abs(diff) < MIL_ALIGN_RAD &&
-            distSqToPlayer < MIL_FIRE_RADIUS_SQ &&
-            now >= mb.fireAt) {
+        const milReady = Math.abs(diff) < MIL_ALIGN_RAD &&
+                         distSqToPlayer < MIL_FIRE_RADIUS_SQ &&
+                         now >= mb.fireAt;
+        if (milReady && !mb.windupUntil) {
+          mb.windupUntil = now + 250;
+        }
+        if (mb.windupUntil && now >= mb.windupUntil) {
           const barrelLen = MILITARY_TURRET_H * 0.65;
           const mx = pivotX + Math.cos(mb.turretAngle) * barrelLen;
           const my = pivotY + Math.sin(mb.turretAngle) * barrelLen;
@@ -1646,6 +1689,7 @@
             life: BULLET_LIFE_MS,
           });
           mb.fireAt = now + 1700 + Math.random() * 1100;
+          mb.windupUntil = 0;
         }
       } else {
         // Burnt — continuous smoke from the roof + occasional bright embers.
@@ -1722,9 +1766,15 @@
         const dx = b.x - en.x, dy = b.y - en.y;
         if (dx * dx + dy * dy < ENEMY_HIT_R * ENEMY_HIT_R) {
           en.hp -= 1;
+          en.flashUntil = now + 60;                  // white pop on the sprite
           sfxHit(now);
-          if (en.hp <= 0) { en.alive = false; spawnExplosion(en.x, en.y, true); }
-          else            { spawnExplosion(b.x, b.y, false); }
+          if (en.hp <= 0) {
+            en.alive = false; spawnExplosion(en.x, en.y, true);
+            hitpause(now, 90);
+          } else {
+            spawnExplosion(b.x, b.y, false);
+            hitpause(now, 35);
+          }
           consumed = true;
           break;
         }
@@ -1741,9 +1791,15 @@
         const top = ROAD_BOTTOM_Y - t.h;
         if (b.x >= t.x - t.w / 2 && b.x <= t.x + t.w / 2 && b.y >= top && b.y <= ROAD_BOTTOM_Y) {
           t.hp -= 1;
+          t.flashUntil = now + 60;
           sfxHit(now);
-          if (t.hp <= 0) { t.alive = false; spawnExplosion(b.x, top + t.h * 0.4, true); }
-          else           { spawnExplosion(b.x, b.y, false); }
+          if (t.hp <= 0) {
+            t.alive = false; spawnExplosion(b.x, top + t.h * 0.4, true);
+            hitpause(now, 80);
+          } else {
+            spawnExplosion(b.x, b.y, false);
+            hitpause(now, 25);
+          }
           consumed = true;
           break;
         }
@@ -1757,9 +1813,15 @@
         const top = ROAD_BOTTOM_Y - k.h;
         if (b.x >= k.x - k.w / 2 && b.x <= k.x + k.w / 2 && b.y >= top && b.y <= ROAD_BOTTOM_Y) {
           k.hp -= 1;
+          k.flashUntil = now + 60;
           sfxHit(now);
-          if (k.hp <= 0) { k.alive = false; spawnExplosion(b.x, top + k.h * 0.4, true); }
-          else           { spawnExplosion(b.x, b.y, false); }
+          if (k.hp <= 0) {
+            k.alive = false; spawnExplosion(b.x, top + k.h * 0.4, true);
+            hitpause(now, 80);
+          } else {
+            spawnExplosion(b.x, b.y, false);
+            hitpause(now, 25);
+          }
           consumed = true;
           break;
         }
@@ -1774,12 +1836,15 @@
         const top = mb.groundY - mb.h;
         if (b.x >= mb.x - mb.w / 2 && b.x <= mb.x + mb.w / 2 && b.y >= top && b.y <= mb.groundY) {
           mb.hp -= 1;
+          mb.flashUntil = now + 60;
           sfxHit(now);
           if (mb.hp <= 0) {
             mb.alive = false;
             spawnExplosion(b.x, top + mb.h * 0.3, true);
+            hitpause(now, 80);
           } else {
             spawnExplosion(b.x, b.y, false);
+            hitpause(now, 25);
           }
           consumed = true;
           break;
@@ -1799,6 +1864,7 @@
           player.hp = Math.max(0, player.hp - 8);
           spawnExplosion(b.x, b.y, false);
           player.invulnUntil = now + 320;
+          hitpause(now, 60);
           break;
         }
       }
@@ -1811,6 +1877,7 @@
           en.alive = false;
           player.hp = Math.max(0, player.hp - 22);
           player.invulnUntil = now + 500;
+          hitpause(now, 150);
         }
       }
     }
@@ -2052,6 +2119,17 @@
       const offX = -spec.turretPivotFracX * trW;
       const offY = -spec.turretPivotFracY * trH;
       ctx.drawImage(img, offX, offY, trW, trH);
+      // Telegraph windup — yellow muzzle pulse, growing as the shot approaches.
+      if (mb.windupUntil && mb.windupUntil > lastFrameNow) {
+        const remaining = (mb.windupUntil - lastFrameNow) / 250;
+        const pulse = 0.55 + 0.45 * Math.sin(lastFrameNow * 0.06);
+        ctx.globalAlpha = (1 - remaining) * 0.85;
+        ctx.fillStyle = '#FFD23F';
+        ctx.beginPath();
+        ctx.arc(0, -spec.turretPivotFracY * trH + trH * 0.15, 4 + 3 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
       ctx.restore();
     }
   }
@@ -2066,6 +2144,9 @@
       const img = mb.alive ? mb.bodyImg : mb.burntImg;
       if (!img) continue;
       ctx.drawImage(img, sx - mb.w / 2, top, mb.w, mb.h);
+      if (mb.flashUntil && mb.flashUntil > lastFrameNow) {
+        drawHitFlash(img, sx - mb.w / 2, top, mb.w, mb.h, (mb.flashUntil - lastFrameNow) / 60);
+      }
     }
   }
 
@@ -2139,6 +2220,9 @@
       // Source PNGs face RIGHT; mirror when driving left so the cab leads.
       if (k.vx < 0) ctx.scale(-1, 1);
       ctx.drawImage(k.img, -k.w / 2, -k.h / 2, k.w, k.h);
+      if (k.flashUntil && k.flashUntil > lastFrameNow) {
+        drawHitFlash(k.img, -k.w / 2, -k.h / 2, k.w, k.h, (k.flashUntil - lastFrameNow) / 60);
+      }
       drawWheelSpin(k, lastFrameNow);
       ctx.restore();
     }
@@ -2172,6 +2256,17 @@
       const offX = -spec.turretPivotFracX * trW;
       const offY = -spec.turretPivotFracY * trH;
       ctx.drawImage(t.turretImg, offX, offY, trW, trH);
+      // Telegraph: pulsing yellow muzzle flicker while the windup is active.
+      if (t.windupUntil && t.windupUntil > lastFrameNow) {
+        const remaining = (t.windupUntil - lastFrameNow) / 250;     // 1 → 0
+        const pulse = 0.55 + 0.45 * Math.sin(lastFrameNow * 0.06);
+        ctx.globalAlpha = (1 - remaining) * 0.85;                    // fade-IN as fire approaches
+        ctx.fillStyle = '#FFD23F';
+        ctx.beginPath();
+        ctx.arc(0, -spec.turretPivotFracY * trH + trH * 0.2, 4 + 3 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
       ctx.restore();
     }
   }
@@ -2183,6 +2278,9 @@
       if (top > H + 40) continue;
       drawGroundShadow(sx, t.w);
       ctx.drawImage(t.bodyImg, sx - t.w / 2, top, t.w, t.h);
+      if (t.flashUntil && t.flashUntil > lastFrameNow) {
+        drawHitFlash(t.bodyImg, sx - t.w / 2, top, t.w, t.h, (t.flashUntil - lastFrameNow) / 60);
+      }
     }
   }
 
@@ -2218,10 +2316,22 @@
     ctx.restore();
   }
 
+  // Hit-flash overlay: redraw the sprite as a pure-white silhouette over the
+  // existing draw, fading from full to zero over the flash window. Uses
+  // ctx.filter to recolour the sprite without touching the surrounding sky.
+  function drawHitFlash(img, x, y, w, h, alpha) {
+    if (!alpha || alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, alpha);
+    ctx.filter = 'brightness(0) invert(1)';
+    ctx.drawImage(img, x, y, w, h);
+    ctx.restore();
+  }
+
   // Draw a plane or chopper in world coords. Planes rotate with heading and
   // get a nose propeller; choppers stay upright and get a horizontal rotor,
   // optionally mirrored to face their direction of travel.
-  function drawAircraft(img, worldX, worldY, heading, targetH, kind, facing) {
+  function drawAircraft(img, worldX, worldY, heading, targetH, kind, facing, flashAlpha) {
     const sx = worldToScreenX(worldX);
     const sy = worldToScreenY(worldY);
     if (sx < -120 || sx > W + 120 || sy < -120 || sy > H + 120) return;
@@ -2232,10 +2342,9 @@
     if (kind === 'chopper') {
       if (facing === -1) ctx.scale(-1, 1);
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
+      drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawRotor(lastFrameNow, 0, -targetH * 0.36, targetW);
     } else {
-      // Plane stays canopy-up: when the heading crosses ±90° the sprite is
-      // mirrored horizontally rather than allowed to fly upside-down.
       if (Math.cos(heading) < 0) {
         ctx.scale(-1, 1);
         ctx.rotate(heading - Math.PI);
@@ -2243,6 +2352,7 @@
         ctx.rotate(heading);
       }
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
+      drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
     }
     ctx.restore();
@@ -2274,7 +2384,10 @@
   function drawEnemies() {
     for (const en of enemies) {
       if (!en.alive || !en.img) continue;
-      drawAircraft(en.img, en.x, en.y, en.heading, 54);  // ~30 % smaller than the hero (72)
+      const flash = (en.flashUntil && en.flashUntil > lastFrameNow)
+        ? (en.flashUntil - lastFrameNow) / 60
+        : 0;
+      drawAircraft(en.img, en.x, en.y, en.heading, 54, undefined, undefined, flash);
     }
   }
 
