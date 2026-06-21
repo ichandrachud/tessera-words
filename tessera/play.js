@@ -752,46 +752,61 @@
   // Instructions screen — shown once on first load (after splash) and dismissed
   // by the START button. Subsequent restarts (after game-over) skip straight to
   // gameplay since the player already knows the rules.
+  const HOW_TO_PLAY_CYAN = '#4DC3FF';   // brand cyan for the heading
+  const instrImg = new Image();
+  let instrReady = false;
+  instrImg.onload = () => { instrReady = true; };
+  instrImg.src = '/images/tesserainstructions.png';
+
   function drawInstructions() {
-    // Full canvas background (banner stays visible underneath in mobile mode).
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, W, BANNER_H > 0 ? BANNER_Y - 8 : H);
 
     const midX = W / 2;
-    // Vertical centre of the play area (above banner on mobile, full canvas on desktop).
     const playBot = BANNER_H > 0 ? BANNER_Y - 8 : H;
-    const midY = playBot / 2;
 
-    // TITLE
+    // ILLUSTRATION — top ~40% of the play area
+    if (instrReady) {
+      const imgMaxH = Math.floor(playBot * 0.40);
+      const imgMaxW = Math.floor(W * 0.86);
+      const aspect = instrImg.width / instrImg.height;
+      let drawH = imgMaxH;
+      let drawW = drawH * aspect;
+      if (drawW > imgMaxW) { drawW = imgMaxW; drawH = drawW / aspect; }
+      const imgY = MODE === 'mobile' ? 20 : 16;
+      ctx.drawImage(instrImg, midX - drawW / 2, imgY, drawW, drawH);
+    }
+
+    // HOW TO PLAY heading — cyan, large
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '700 11px Inter, sans-serif';
-    ctx.fillStyle = C.accent;
-    ctx.fillText('HOW TO PLAY', midX, midY - 160);
+    const headingY = Math.floor(playBot * 0.55);
+    ctx.font = '800 ' + (MODE === 'mobile' ? 28 : 32) + 'px Inter, sans-serif';
+    ctx.fillStyle = HOW_TO_PLAY_CYAN;
+    ctx.fillText('HOW TO PLAY', midX, headingY);
 
-    ctx.font = '800 ' + (MODE === 'mobile' ? 32 : 36) + 'px Inter, sans-serif';
-    ctx.fillStyle = C.text;
-    ctx.fillText('TESSERA Words', midX, midY - 120);
-
-    // RULES — three short lines
+    // RULES — 6 lines (line 2 split into "across or down" / "3 letters minimum"
+    // and the closing line split so the double-tap hint reads cleanly).
     const rules = [
       'Tap a column to slide the falling tile there.',
-      'Form English words across or down — 3 letters or more.',
+      'Form English words across or down',
+      '3 letters minimum',
       'Longer words score exponentially more.',
-      'Beat the stack. Game gets faster as you play.',
+      'Game gets faster as you play.',
+      'Double tap the square to land a tile faster',
     ];
-    ctx.font = '500 ' + (MODE === 'mobile' ? 14 : 14) + 'px Inter, sans-serif';
-    ctx.fillStyle = C.textDim;
-    const lineH = 24;
-    const rulesTop = midY - 60;
+    ctx.font = '500 ' + (MODE === 'mobile' ? 15 : 14) + 'px Inter, sans-serif';
+    ctx.fillStyle = C.text;
+    const lineH = MODE === 'mobile' ? 22 : 24;
+    const rulesTop = headingY + 40;
     for (let i = 0; i < rules.length; i++) {
       ctx.fillText(rules[i], midX, rulesTop + i * lineH);
     }
 
-    // START button — generous pill, accent fill, white text
+    // START button — pill, accent fill, white text
     const btnW = MODE === 'mobile' ? 240 : 280;
     const btnH = MODE === 'mobile' ? 56 : 52;
-    const btnY = rulesTop + rules.length * lineH + 28;
+    const btnY = rulesTop + rules.length * lineH + 24;
     const btnX = midX - btnW / 2;
     START_BTN.x = btnX; START_BTN.y = btnY; START_BTN.w = btnW; START_BTN.h = btnH;
     ctx.fillStyle = C.accent;
@@ -800,14 +815,6 @@
     ctx.fillStyle = '#FFFFFF';
     ctx.font = '700 14px Inter, sans-serif';
     ctx.fillText('START', midX, btnY + btnH / 2 + 1);
-
-    // Controls hint (small, beneath the button)
-    ctx.font = '500 10px Inter, sans-serif';
-    ctx.fillStyle = C.textMute;
-    const ctrlHint = MODE === 'mobile'
-      ? 'TAP A COLUMN TO MOVE THE TILE'
-      : '← →  MOVE   ·   ↓ / SPACE  FAST DROP   ·   CLICK A COLUMN TO MOVE';
-    ctx.fillText(ctrlHint, midX, btnY + btnH + 26);
   }
 
   function drawGameOver() {
