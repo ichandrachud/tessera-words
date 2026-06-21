@@ -86,6 +86,9 @@
     // aspect is preserved by chrome.css so scaleX ≈ scaleY (take min for safety).
     const scale = Math.min(backingW / W, backingH / H);
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    // Tell shared/input.js what coord space we draw in.
+    canvas.dataset.logicalW = W;
+    canvas.dataset.logicalH = H;
   }
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
@@ -248,10 +251,6 @@
     return Math.max(STEP_MIN_MS, STEP_BASE_MS - lettersDropped * STEP_DELTA_MS);
   }
   let fastDropActive = false;
-  // Double-tap on a column slot the active tile there instantly.
-  let lastTapAt = 0;
-  let lastTapCol = -1;
-  const DOUBLE_TAP_MS = 320;
 
   // ---------- AUDIO ----------
   // All synthesis lives in shared/sfx.js. We keep thin per-game wrappers
@@ -468,27 +467,34 @@
     }
   });
 
-  // Mouse / pointer
+  // Pointer / touch — uses shared/input.js. The targetKey() callback tells
+  // ZInput what counts as "the same target" for double-tap detection:
+  // column index for a tap in the grid area, distinct sentinel strings
+  // elsewhere (so tapping the sound button then a grid column never
+  // registers as a double-tap).
   function inRect(r, lx, ly) {
     return lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h;
   }
-  canvas.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
+  function tapTarget(p) {
+    if (inRect(SOUND_BTN, p.x, p.y)) return 'sound';
+    if (awaitingStart) return inRect(START_BTN, p.x, p.y) ? 'start' : 'instructions';
+    if (gameOver) return 'gameover';
+    if (!active) return 'idle';
+    if (p.y > GRID_Y - CELL && p.y < GRID_Y + GRID_H + 40) {
+      return 'col:' + Math.max(0, Math.min(COLS - 1, Math.floor((p.x - GRID_X) / CELL)));
+    }
+    return 'outside';
+  }
+  window.ZInput.onTap(canvas, ({ x, y, isDouble }) => {
     ensureAudio();
-    const rect = canvas.getBoundingClientRect();
-    const lx = ((e.clientX - rect.left) / rect.width) * W;
-    const ly = ((e.clientY - rect.top)  / rect.height) * H;
 
-    // Sound toggle is live in every scene.
-    if (inRect(SOUND_BTN, lx, ly)) {
+    if (inRect(SOUND_BTN, x, y)) {
       setSound(!sfx.isOn());
       if (sfx.isOn()) tone(660, 0.06, 0.04, 'sine');
       return;
     }
-
-    // Instructions scene: only the START pill is interactive.
     if (awaitingStart) {
-      if (inRect(START_BTN, lx, ly)) {
+      if (inRect(START_BTN, x, y)) {
         awaitingStart = false;
         sfxStart();
         initGame();
@@ -497,25 +503,15 @@
     }
     if (gameOver) { sfxStart(); initGame(); return; }
     if (!active) return;
-    if (ly > GRID_Y - CELL && ly < GRID_Y + GRID_H + 40) {
-      const col = Math.max(0, Math.min(COLS - 1, Math.floor((lx - GRID_X) / CELL)));
-      const tNow = performance.now();
-      // Double-tap on the same column slot the tile there instantly. Single
-      // taps still just move the tile to that column at the normal cadence.
-      if (col === lastTapCol && col === active.col && (tNow - lastTapAt) < DOUBLE_TAP_MS) {
-        lastTapAt = 0;
-        lastTapCol = -1;
-        lockTile();
-        return;
-      }
+    if (y > GRID_Y - CELL && y < GRID_Y + GRID_H + 40) {
+      const col = Math.max(0, Math.min(COLS - 1, Math.floor((x - GRID_X) / CELL)));
+      if (isDouble && col === active.col) { lockTile(); return; }
       if (col !== active.col) {
         active.col = col;
         sfxTick();
       }
-      lastTapAt = tNow;
-      lastTapCol = col;
     }
-  });
+  }, { doubleTapMs: 320, targetKey: tapTarget });
 
   // ---------- RENDERING ----------
   function roundRect(x, y, w, h, r) {

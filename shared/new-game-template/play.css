@@ -1,0 +1,25 @@
+/* __GAME_NAME__ — per-game styles. Inherits everything from
+   ../shared/chrome.css and ../shared/tokens.css. Add only what's
+   specific to this game (custom splash, HUD chrome, etc.). */
+
+/* Splash example: replace the gradient with your game's splash.jpg. */
+.splash {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #0E1726 0%, #1a2540 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  font: 700 48px Inter, system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  transition: opacity 600ms ease-out;
+  pointer-events: none;
+  z-index: 10;
+}
+.splash::before {
+  content: '__GAME_NAME__';
+}
+.splash.fading {
+  opacity: 0;
+}
