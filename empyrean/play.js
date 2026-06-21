@@ -560,6 +560,14 @@
   const PLAYER_ANG_DAMP  = 4.5;          // how fast angVel decays to 0 when input released
   const PLAYER_ANG_MAX_DESKTOP = 1.9;    // max rate of turn (rad/sec)
   const PLAYER_ANG_MAX_MOBILE  = 1.5;
+  // Visual flip animation — when the plane settles into the left half of
+  // the compass (cos heading << 0) it barrel-rolls canopy-up, with a
+  // horizontal scale squash so the transition reads as a roll. 0 = right
+  // half (no flip), 1 = left half (mirrored). Eased with hysteresis so a
+  // vertical loop doesn't oscillate it.
+  player.visualFlip = 0;
+  const FLIP_EASE = 6;                   // 1 / s — approach rate for visualFlip
+  const FLIP_TRIGGER = 0.18;             // hysteresis band on cos(heading)
   // Chopper movement: always upright, fixed speed in 8 directions. Roughly
   // matches a plane's cruise speed (no throttle band).
   const CHOPPER_SPEED = 0.075;  // px / ms
@@ -1455,6 +1463,16 @@
       if (player.angVel < -angMax) player.angVel = -angMax;
       player.heading += player.angVel * dts;
       player.heading = normalizeAngle(player.heading);
+      // Visual-flip target — hysteresis band on cos(heading) so a vertical
+      // loop doesn't toggle the flip mid-pass. Eases toward target over
+      // ~0.3 s, giving the barrel-roll feel rather than a snap.
+      {
+        const c = Math.cos(player.heading);
+        let targetFlip = player.visualFlip;
+        if (c >  FLIP_TRIGGER) targetFlip = 0;
+        else if (c < -FLIP_TRIGGER) targetFlip = 1;
+        player.visualFlip += (targetFlip - player.visualFlip) * Math.min(1, FLIP_EASE * dts);
+      }
 
       const sp = playerSpeed();
       player.x += Math.cos(player.heading) * sp * dt;
@@ -1714,6 +1732,16 @@
       if (en.angVel < -ENEMY_ANG_MAX) en.angVel = -ENEMY_ANG_MAX;
       en.heading += en.angVel * dts2;
       en.heading = normalizeAngle(en.heading);
+      // Same barrel-roll flip target as the player so enemies look natural
+      // when they settle into left-flying flight.
+      {
+        if (en.visualFlip === undefined) en.visualFlip = 0;
+        const c = Math.cos(en.heading);
+        let targetFlip = en.visualFlip;
+        if (c >  FLIP_TRIGGER) targetFlip = 0;
+        else if (c < -FLIP_TRIGGER) targetFlip = 1;
+        en.visualFlip += (targetFlip - en.visualFlip) * Math.min(1, FLIP_EASE * dts2);
+      }
 
       // Throttle: cruise / dash both ~40 % lower than the previous values.
       const targetThrottle = dist > 600 ? 0.50 : 0.32;
@@ -2488,7 +2516,7 @@
   // Draw a plane or chopper in world coords. Planes rotate with heading and
   // get a nose propeller; choppers stay upright and get a horizontal rotor,
   // optionally mirrored to face their direction of travel.
-  function drawAircraft(img, worldX, worldY, heading, targetH, kind, facing, flashAlpha) {
+  function drawAircraft(img, worldX, worldY, heading, targetH, kind, facing, flashAlpha, visualFlip) {
     const sx = worldToScreenX(worldX);
     const sy = worldToScreenY(worldY);
     if (sx < -120 || sx > W + 120 || sy < -120 || sy > H + 120) return;
@@ -2502,11 +2530,16 @@
       drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawRotor(lastFrameNow, 0, -targetH * 0.36, targetW);
     } else {
-      // Continuous rotation — the plane flies upside-down at the top of a
-      // loop (canopy down), like a real aircraft. Trying to keep the canopy
-      // up via a horizontal flip past ±90° introduces a discontinuity at
-      // the threshold which reads as a sudden 180° jump.
-      ctx.rotate(heading);
+      // Barrel-roll flip: visualFlip eases between 0 (canopy-up, facing
+      // right) and 1 (canopy-up, facing left). During the transition the
+      // sprite horizontally squashes through scale.x = 0, then re-emerges
+      // mirrored — reads as a roll, not a snap. The base rotation swaps
+      // (heading vs heading-π) at the midpoint so the nose never reverses.
+      const flip = visualFlip || 0;
+      const flipScale = 1 - 2 * flip;
+      const flipRot = (flip < 0.5) ? heading : (heading - Math.PI);
+      ctx.scale(flipScale, 1);
+      ctx.rotate(flipRot);
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
       drawHitFlash(img, -targetW / 2, -targetH / 2, targetW, targetH, flashAlpha);
       drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
@@ -2540,7 +2573,7 @@
     }
     if (alpha < 1) ctx.save();
     if (alpha < 1) ctx.globalAlpha = alpha;
-    drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing);
+    drawAircraft(assets.player, player.x, player.y, player.heading, 72, player.kind, player.facing, 0, player.visualFlip);
     if (alpha < 1) ctx.restore();
   }
 
@@ -2550,7 +2583,7 @@
       const flash = (en.flashUntil && en.flashUntil > lastFrameNow)
         ? (en.flashUntil - lastFrameNow) / 60
         : 0;
-      drawAircraft(en.img, en.x, en.y, en.heading, 54, undefined, undefined, flash);
+      drawAircraft(en.img, en.x, en.y, en.heading, 54, undefined, undefined, flash, en.visualFlip || 0);
     }
   }
 
