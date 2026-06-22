@@ -1791,6 +1791,7 @@
                 // Ship is finished but lingers as a smouldering wreck —
                 // small impact flash, no big boom, no debris cloud.
                 mb.alive = false;
+                mb.burnStartedAt = now;     // drives the charring gradient overlay
                 spawnExplosion(b.x, b.y, false);
                 hitpause(now, 40);
               } else {
@@ -2217,6 +2218,7 @@
               spawnExplosion(b.x, top + mb.h * 0.3, true);
               hitpause(now, 80);
             } else {
+              mb.burnStartedAt = now;
               spawnExplosion(b.x, b.y, false);
             }
           } else {
@@ -2530,13 +2532,46 @@
       if (sx + mb.w / 2 < -40 || sx - mb.w / 2 > W + 40) continue;
       const top = worldToScreenY(mb.groundY - mb.h);
       if (top > H + 40) continue;
-      // Ships skip the destroyed render — they sink and disappear. Buildings
-      // swap to a burnt sprite so the silhouette persists.
+      // Burning ships keep the body sprite; buildings swap to a burnt
+      // variant. Both paths read from `burntImg` after death.
       const img = mb.alive ? mb.bodyImg : mb.burntImg;
       if (!img) continue;
-      ctx.drawImage(img, sx - mb.w / 2, top, mb.w, mb.h);
+      const drawX = sx - mb.w / 2;
+      ctx.drawImage(img, drawX, top, mb.w, mb.h);
       if (mb.flashUntil && mb.flashUntil > lastFrameNow) {
-        drawHitFlash(img, sx - mb.w / 2, top, mb.w, mb.h, (mb.flashUntil - lastFrameNow) / 60);
+        drawHitFlash(img, drawX, top, mb.w, mb.h, (mb.flashUntil - lastFrameNow) / 60);
+      }
+      // CHARRING OVERLAY — ships only, after death. Render the body + a
+      // vertical black gradient INTO an offscreen canvas using source-atop
+      // so the gradient is clipped to the ship's own non-transparent
+      // pixels (the water and sky behind stay untouched). Composite the
+      // result back. Ramps up over ~3 sec so the hit visibly chars the
+      // hull rather than turning it black on contact.
+      if (!mb.alive && mb.kind === 'ship' && mb.burnStartedAt) {
+        const burnAge = lastFrameNow - mb.burnStartedAt;
+        const burn = Math.min(1, burnAge / 3000) * 0.85;
+        if (burn > 0) {
+          if (!mb._burnCanvas) {
+            mb._burnCanvas = document.createElement('canvas');
+            mb._burnCanvas.width  = Math.max(1, Math.round(mb.w));
+            mb._burnCanvas.height = Math.max(1, Math.round(mb.h));
+          }
+          const oc  = mb._burnCanvas;
+          const octx = oc.getContext('2d');
+          octx.clearRect(0, 0, oc.width, oc.height);
+          octx.drawImage(img, 0, 0, oc.width, oc.height);
+          octx.globalCompositeOperation = 'source-atop';
+          octx.globalAlpha = burn;
+          const grad = octx.createLinearGradient(0, 0, 0, oc.height);
+          grad.addColorStop(0,    '#222222');
+          grad.addColorStop(0.55, '#0a0a0a');
+          grad.addColorStop(1,    '#000000');
+          octx.fillStyle = grad;
+          octx.fillRect(0, 0, oc.width, oc.height);
+          octx.globalAlpha = 1;
+          octx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(oc, drawX, top, mb.w, mb.h);
+        }
       }
     }
   }
