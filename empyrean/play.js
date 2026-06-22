@@ -31,6 +31,10 @@
       world: 'ocean',
       story: 'The blockade has reached our coast. A flotilla of armed cutters slipped into our waters overnight, their deck guns tracking every fishing boat in the harbour. There is no fleet left to meet them. Your wingmen have orders to escort civilians to shore — you are flying alone, into open water. Sink them.',
     },
+    {
+      world: 'desert',
+      story: 'They moved their operations inland — a chain of camouflaged outposts hidden along the dunes, cannons trained skyward. Recon picked up the pattern only after the third wave. The strike window closes at dusk. Burn the bunkers before they burn another column.',
+    },
   ];
   const URL_PARAMS = new URLSearchParams(window.location.search);
   // 1-indexed in the URL for player-friendliness. mission=2 means MISSIONS[1].
@@ -40,11 +44,12 @@
   // Allow ?world= to override the mission's default world (useful for
   // quick visual iteration without bumping the mission number).
   const WORLD_OVERRIDE = URL_PARAMS.get('world');
-  const WORLD = ['ocean', 'night-city', 'night-ocean', 'city'].includes(WORLD_OVERRIDE)
+  const WORLD = ['ocean', 'night-city', 'night-ocean', 'city', 'desert'].includes(WORLD_OVERRIDE)
     ? WORLD_OVERRIDE
     : CURRENT_MISSION.world;
-  const IS_OCEAN = WORLD === 'ocean' || WORLD === 'night-ocean';
-  const IS_NIGHT = WORLD === 'night-city' || WORLD === 'night-ocean';
+  const IS_OCEAN  = WORLD === 'ocean' || WORLD === 'night-ocean';
+  const IS_NIGHT  = WORLD === 'night-city' || WORLD === 'night-ocean';
+  const IS_DESERT = WORLD === 'desert';
   document.body.classList.add('world-' + WORLD);
 
   // ---------- CANVAS DIMS (FIXED 16:9) ----------
@@ -137,6 +142,18 @@
   // radial-gradient centres that read as a dark halo around each star).
   if (IS_NIGHT) {
     loadImage('./assets/skybackground.svg').then(img => { assets.skyNight = img; });
+  }
+
+  // ---------- DESERT WORLD ASSETS ----------
+  // Loaded only when WORLD === 'desert'. 15 building variants + 1 turret
+  // sprite + the panoramic background (a 12000 x 1200 horizon strip).
+  if (IS_DESERT) {
+    loadImage('./assets/desert/desertbackground.png').then(img => { assets.desertBg = img; });
+    loadImage('./assets/desert/camo-turret.png').then(img => { assets.desertTurret = img; });
+    const desertBldgIds = Array.from({ length: 15 }, (_, i) => i + 1);
+    Promise.all(desertBldgIds.map(n =>
+      loadImage(`./assets/desert/camo-bldg-${n}.png`)
+    )).then(imgs => { assets.desertBldgs = imgs.filter(Boolean); buildStageIfReady(); });
   }
 
   // ---------- MISSION 1 — AIRCRAFT LINEUP ----------
@@ -727,6 +744,8 @@
     if (!assets.enemies.length) return;
     if (IS_OCEAN) {
       if (!assets.water || !assets.ships || !assets.ships.length || !assets.shipTurret) return;
+    } else if (IS_DESERT) {
+      if (!assets.desertBg || !assets.desertBldgs || !assets.desertBldgs.length || !assets.desertTurret) return;
     } else {
       if (!assets.apartments.length) return;
       if (!assets.tankBodies.length || !assets.trucks.length) return;
@@ -735,6 +754,10 @@
     stageBuilt = true;
     if (IS_OCEAN) {
       buildOceanStage();
+      return;
+    }
+    if (IS_DESERT) {
+      buildDesertStage();
       return;
     }
 
@@ -925,6 +948,129 @@
         kind: 'ship',
         groundY: OCEAN_WATERLINE_Y,
       });
+    }
+    spawnBonuses();
+  }
+
+  // Mission 3 — desert. 8 enemy planes + 15 camouflaged buildings spread
+  // across the stage. 7 of the 15 are placed as background scenery
+  // (smaller, drawn higher up against the horizon — purely decorative).
+  // The remaining 8 sit on the ground at full scale; 6 of them carry
+  // turrets and count as kill targets, the other 2 are silent (still
+  // bombable for fun, but don't gate stage clear).
+  function buildDesertStage() {
+    function deckPicker(pool) {
+      let deck = [];
+      return () => {
+        if (deck.length === 0) {
+          deck = pool.slice();
+          for (let k = deck.length - 1; k > 0; k--) {
+            const j = Math.floor(Math.random() * (k + 1));
+            [deck[k], deck[j]] = [deck[j], deck[k]];
+          }
+        }
+        return deck.pop();
+      };
+    }
+    // --- Enemy planes ---
+    const N_ENEMIES = 8;
+    const pickEnemyImg = deckPicker(assets.enemies);
+    for (let i = 0; i < N_ENEMIES; i++) {
+      const img = pickEnemyImg();
+      const startX = 600 + (i + 0.5) * (STAGE_W - 800) / N_ENEMIES;
+      const yFrac = 0.1 + Math.random() * 0.75;
+      const startY = FLIGHT_Y_MIN + yFrac * (FLIGHT_Y_MAX - FLIGHT_Y_MIN);
+      enemies.push({
+        x: startX, y: startY,
+        heading: Math.PI,
+        throttle: 0.45,
+        hp: 3,
+        alive: true,
+        img,
+        fireAt: 0,
+        awake: false,
+        wanderAngle: (Math.random() - 0.5) * 0.6,
+        wanderUntil: 0,
+        contrailAt: 0,
+      });
+    }
+    // --- Camouflaged buildings ---
+    // Shuffle the 15 sprite indices so each building uses a distinct image.
+    const idxs = Array.from({ length: assets.desertBldgs.length }, (_, i) => i);
+    for (let k = idxs.length - 1; k > 0; k--) {
+      const j = Math.floor(Math.random() * (k + 1));
+      [idxs[k], idxs[j]] = [idxs[j], idxs[k]];
+    }
+    const N_TOTAL = 15;
+    const N_BACKGROUND = 7;
+    const N_FOREGROUND = N_TOTAL - N_BACKGROUND;     // = 8 front-row
+    const N_TURRETS    = 6;                          // 6 of the 8 front-row have turrets
+    // Background row — smaller silhouettes drawn closer to the horizon.
+    // Stored in `apartments` (the scenery array) so they re-use the
+    // existing render pipeline. No HP, can't be destroyed.
+    for (let i = 0; i < N_BACKGROUND; i++) {
+      const img = assets.desertBldgs[idxs[i] % assets.desertBldgs.length];
+      const scale = 0.42 + Math.random() * 0.18;     // 0.42 - 0.60
+      const baseH = 150;
+      const h = baseH * scale;
+      const w = h * (img.width / img.height);
+      // Spread across the stage with some random jitter so back-row
+      // buildings don't line up exactly with front-row ones.
+      const x = 400 + (i + 0.5) * (STAGE_W - 800) / N_BACKGROUND + (Math.random() - 0.5) * 320;
+      // Drawn HIGHER than ground level (closer to the horizon). We give
+      // these a fake `groundY` so the existing draw pipeline works.
+      const horizonLift = 28 + Math.random() * 16;
+      apartments.push({
+        x, w, h,
+        img,
+        alive: true,
+        hp: 999,                          // effectively indestructible
+        groundY: STREET_TOP_Y - horizonLift,
+        depth: 'back',
+      });
+    }
+    // Foreground buildings — full scale, on the ground. 6 of 8 carry turrets.
+    const turretMask = [];
+    for (let i = 0; i < N_FOREGROUND; i++) turretMask.push(i < N_TURRETS);
+    for (let k = turretMask.length - 1; k > 0; k--) {
+      const j = Math.floor(Math.random() * (k + 1));
+      [turretMask[k], turretMask[j]] = [turretMask[j], turretMask[k]];
+    }
+    for (let i = 0; i < N_FOREGROUND; i++) {
+      const img = assets.desertBldgs[idxs[N_BACKGROUND + i] % assets.desertBldgs.length];
+      const baseH = 180;
+      const scale = 0.95 + Math.random() * 0.12;    // 0.95 - 1.07
+      const h = baseH * scale;
+      const w = h * (img.width / img.height);
+      const x = 700 + (i + 0.5) * (STAGE_W - 1300) / N_FOREGROUND + (Math.random() - 0.5) * 180;
+      if (turretMask[i]) {
+        // Armed bunker — counts toward stage clear. Uses the same render
+        // path as city military buildings; desertTurret sprite drives the
+        // turret render (a render branch in drawMilitaryTurrets).
+        militaryBuildings.push({
+          x, w, h,
+          bodyImg: img,
+          burntImg: img,                  // no dedicated burnt variant; same hull
+          alive: true,
+          hp: 6,
+          turretAngle: -Math.PI / 2,
+          fireAt: 0,
+          lastSmokeAt: 0,
+          kind: 'desert',
+          groundY: STREET_TOP_Y,
+        });
+      } else {
+        // Silent bunker — scenery only, but with HP so player bombs can
+        // still chew it up for fun. Doesn't gate stage clear.
+        apartments.push({
+          x, w, h,
+          img,
+          alive: true,
+          hp: 2,
+          groundY: STREET_TOP_Y,
+          depth: 'front',
+        });
+      }
     }
     spawnBonuses();
   }
@@ -2423,6 +2569,7 @@
     // Ocean stages substitute the road for a water surface. Same anchor pattern
     // (parallax-scrolled with the camera), no motion specks.
     if (IS_OCEAN) { drawWater(); return; }
+    if (IS_DESERT) { drawDesert(); return; }
     // Street is anchored at STREET_TOP_Y. With the camera following the hero
     // vertically, the street drops out of view when the hero climbs into the
     // upper sky band — the ground reads as a real floor that you fly above.
@@ -2474,6 +2621,34 @@
       // Fallback solid teal while the texture loads.
       ctx.fillStyle = '#1f8a8c';
       ctx.fillRect(0, waterTopScreenY, W, waterH);
+    }
+  }
+
+  // Desert horizon — the camouflage-buildings background. Wide panoramic
+  // PNG (12000 x 1200) stretched to the canvas width. Positioned vertically
+  // so its bottom aligns with STREET_TOP_Y (the same ground line where
+  // foreground buildings sit). Single drawImage, no tile, no seam.
+  function drawDesert() {
+    if (!assets.desertBg) {
+      ctx.fillStyle = '#c8a06a';     // fallback sand colour
+      const sy = worldToScreenY(STREET_TOP_Y);
+      ctx.fillRect(0, sy, W, H - sy);
+      return;
+    }
+    const img = assets.desertBg;
+    const groundScreenY = worldToScreenY(STREET_TOP_Y);
+    if (groundScreenY > H) return;
+    // Stretch the image so it spans the full canvas width and reaches up
+    // from the ground line by its native aspect ratio.
+    const drawW = W;
+    const drawH = drawW * (img.height / img.width);
+    const topY = groundScreenY - drawH;
+    ctx.drawImage(img, 0, topY, drawW, drawH);
+    // Also fill the area BELOW the horizon with the bottom-row sand colour
+    // so the camera looking down doesn't show empty sky beneath the ground.
+    if (groundScreenY < H) {
+      ctx.fillStyle = '#a07a4c';
+      ctx.fillRect(0, groundScreenY, W, H - groundScreenY);
     }
   }
 
@@ -2537,13 +2712,30 @@
   }
 
   function drawApartments() {
-    for (const a of apartments) {
-      if (!a.alive || !a.img) continue;
-      const sx = worldToScreenX(a.x);
-      if (sx + a.w / 2 < -10 || sx - a.w / 2 > W + 10) continue;
-      const top = worldToScreenY(STREET_TOP_Y - a.h);
-      if (top > H + 10) continue;
-      ctx.drawImage(a.img, sx - a.w / 2, top, a.w, a.h);
+    // Two passes so back-row (depth='back') desert silhouettes always
+    // render BEHIND front-row buildings and bunkers.
+    const back  = apartments.filter(a => a.depth === 'back');
+    const front = apartments.filter(a => a.depth !== 'back');
+    for (const list of [back, front]) {
+      for (const a of list) {
+        if (!a.alive || !a.img) continue;
+        const sx = worldToScreenX(a.x);
+        if (sx + a.w / 2 < -10 || sx - a.w / 2 > W + 10) continue;
+        // groundY override lets desert background buildings sit higher
+        // (closer to the horizon) than the standard ground line.
+        const ground = (a.groundY !== undefined) ? a.groundY : STREET_TOP_Y;
+        const top = worldToScreenY(ground - a.h);
+        if (top > H + 10) continue;
+        // Slight haze on back-row buildings to suggest distance.
+        if (a.depth === 'back') {
+          ctx.save();
+          ctx.globalAlpha = 0.78;
+          ctx.drawImage(a.img, sx - a.w / 2, top, a.w, a.h);
+          ctx.restore();
+        } else {
+          ctx.drawImage(a.img, sx - a.w / 2, top, a.w, a.h);
+        }
+      }
     }
   }
 
@@ -2552,9 +2744,8 @@
   // burnt, swap to the burnt body sprite and skip the turret entirely
   // (smoke + embers come from the update loop's particle emission).
   function drawMilitaryTurrets() {
-    // Either turret sprite is enough — city stages won't have ship turrets
-    // loaded and vice versa.
-    if (!assets.militaryTurret && !assets.shipTurret) return;
+    // Any turret sprite is enough — each world only loads its own turret art.
+    if (!assets.militaryTurret && !assets.shipTurret && !assets.desertTurret) return;
     for (const mb of militaryBuildings) {
       if (!mb.alive) continue;
       const sx = worldToScreenX(mb.x);
@@ -2564,10 +2755,18 @@
       const spec = MILITARY_TURRET_SPEC;
       const pivotSX = sx + (spec.bodyPivotFracX - 0.5) * mb.w;
       const pivotSY = bodyTop + spec.bodyPivotFracY * mb.h;
-      // Ocean ships use a different turret sprite, sized larger so the deck
-      // gun reads as a deck gun rather than a rooftop SAM.
-      const img = (mb.kind === 'ship' && assets.shipTurret) ? assets.shipTurret : assets.militaryTurret;
-      const trH = (mb.kind === 'ship') ? SHIP_TURRET_H : MILITARY_TURRET_H;
+      // Per-world turret sprite + size.
+      let img, trH;
+      if (mb.kind === 'ship' && assets.shipTurret) {
+        img = assets.shipTurret;
+        trH = SHIP_TURRET_H;
+      } else if (mb.kind === 'desert' && assets.desertTurret) {
+        img = assets.desertTurret;
+        trH = MILITARY_TURRET_H;
+      } else {
+        img = assets.militaryTurret;
+        trH = MILITARY_TURRET_H;
+      }
       const trW = trH * (img.width / img.height);
       ctx.save();
       ctx.translate(pivotSX, pivotSY);
