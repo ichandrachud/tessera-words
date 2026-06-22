@@ -796,6 +796,7 @@
         // pursuit curve. See updateEnemies.
         wanderAngle: (Math.random() - 0.5) * 0.6,
         wanderUntil: 0,
+        contrailAt: 0,        // tail-smoke emit timestamp
       });
     }
 
@@ -895,6 +896,7 @@
         awake: false,
         wanderAngle: (Math.random() - 0.5) * 0.6,
         wanderUntil: 0,
+        contrailAt: 0,        // tail-smoke emit timestamp
       });
     }
     // Ships — 5 stationary vessels spread across the stage.
@@ -1377,6 +1379,9 @@
   // Continuous smoke trail starts when the player drops below 60% HP and
   // grows denser as HP approaches zero. Last emission timestamp.
   let playerSmokeAt = 0;
+  // White contrail trail — emits constantly when the player is alive so
+  // direction and apparent speed are visible at a glance, independent of HP.
+  let playerContrailAt = 0;
   function bombFlash(now, amplitude, ms) {
     flashPulseAt = now;
     flashPulseMs = ms;
@@ -1610,11 +1615,16 @@
         player.heading = normalizeAngle(Math.PI - player.heading);
       }
       if (player.y < FLIGHT_Y_MIN) {
+        // Sky ceiling — still bounce off the top so the player isn't
+        // punished for climbing too high while dogfighting.
         player.y = FLIGHT_Y_MIN;
         player.heading = normalizeAngle(-player.heading);
       } else if (player.y > FLIGHT_Y_MAX) {
+        // Hit the ground (rooftops on city, waterline on ocean) → CRASH.
+        // Setting hp = 0 triggers the existing explosion + lives-- + respawn
+        // pipeline. The "alive" check in that pipeline does the rest.
         player.y = FLIGHT_Y_MAX;
-        player.heading = normalizeAngle(-player.heading);
+        player.hp = 0;
       }
     }
 
@@ -1623,6 +1633,25 @@
     updateEngine();
     updateVehicleAmbient();
     updateEnemyAmbient();
+
+    // White contrail trail — emit a tiny white smoke puff at the tail every
+    // ~110 ms when the player is alive. Reads as direction + speed regardless
+    // of damage. Separate from the damage smoke block below.
+    if (player.hp > 0 && now - playerContrailAt > 110) {
+      playerContrailAt = now;
+      const fs = player.mirror ? -1 : 1;
+      const tx = player.x - fs * Math.cos(player.heading) * 24;
+      const ty = player.y -      Math.sin(player.heading) * 24;
+      particles.push({
+        kind: 'smoke', x: tx, y: ty,
+        vx: (Math.random() - 0.5) * 0.12,
+        vy: (Math.random() - 0.5) * 0.12,
+        life0: 500 + Math.random() * 200,
+        life:  500 + Math.random() * 200,
+        r0:    2.2 + Math.random() * 1.3,
+        color: 'rgba(255, 255, 255, 0.55)',
+      });
+    }
 
     // Damage smoke — starts at 60% HP, denser as HP approaches zero.
     // Spawn cadence interpolates from 220 ms (light wisp at 60% HP) to
@@ -1897,6 +1926,25 @@
       const enSp = ENEMY_MIN_SPEED + (ENEMY_MAX_SPEED - ENEMY_MIN_SPEED) * en.throttle;
       en.x += Math.cos(en.heading) * enSp * dt;
       en.y += Math.sin(en.heading) * enSp * dt;
+
+      // White contrail — small puff at the tail every ~140 ms so each enemy
+      // reads as moving (slightly slower cadence than the player's trail to
+      // keep the screen from drowning in white when many enemies are awake).
+      if (now - en.contrailAt > 140) {
+        en.contrailAt = now;
+        const fs = en.mirror ? -1 : 1;
+        const tx = en.x - fs * Math.cos(en.heading) * 22;
+        const ty = en.y -      Math.sin(en.heading) * 22;
+        particles.push({
+          kind: 'smoke', x: tx, y: ty,
+          vx: (Math.random() - 0.5) * 0.10,
+          vy: (Math.random() - 0.5) * 0.10,
+          life0: 450 + Math.random() * 180,
+          life:  450 + Math.random() * 180,
+          r0:    1.8 + Math.random() * 1.1,
+          color: 'rgba(255, 255, 255, 0.45)',
+        });
+      }
 
       if (en.y < FLIGHT_Y_MIN) { en.y = FLIGHT_Y_MIN; en.heading = -en.heading; }
       if (en.y > FLIGHT_Y_MAX) { en.y = FLIGHT_Y_MAX; en.heading = -en.heading; }
