@@ -804,10 +804,9 @@
       // 1230 px) at spawn so air combat starts within the first second of
       // flying — without this, the wide ocean read as "empty sky" for ~3 sec.
       const startX = 600 + (i + 0.5) * (STAGE_W - 800) / N_ENEMIES;
-      // Bias toward the upper sky so the hero (which spawns mid-height) has
-      // to climb to engage — gives the player time to settle into the
-      // controls before the first interception.
-      const yFrac = 0.1 + Math.random() * 0.75;
+      // Bias spawn altitude toward the player's spawn Y (lower half of the
+      // flight band) so enemies are within camera reach from frame 1.
+      const yFrac = 0.55 + Math.random() * 0.40;
       const startY = FLIGHT_Y_MIN + yFrac * (FLIGHT_Y_MAX - FLIGHT_Y_MIN);
       enemies.push({
         x: startX, y: startY,
@@ -909,7 +908,10 @@
       // 1230 px) at spawn so air combat starts within the first second of
       // flying — without this, the wide ocean read as "empty sky" for ~3 sec.
       const startX = 600 + (i + 0.5) * (STAGE_W - 800) / N_ENEMIES;
-      const yFrac = 0.1 + Math.random() * 0.75;
+      // Spawn altitudes biased toward the player's spawn Y (= H * 0.52,
+      // near ground level) so enemies are actually visible from frame 1
+      // rather than spawning high in the empty sky.
+      const yFrac = 0.55 + Math.random() * 0.40;     // 0.55 - 0.95
       const startY = FLIGHT_Y_MIN + yFrac * (FLIGHT_Y_MAX - FLIGHT_Y_MIN);
       enemies.push({
         x: startX, y: startY,
@@ -978,7 +980,8 @@
     for (let i = 0; i < N_ENEMIES; i++) {
       const img = pickEnemyImg();
       const startX = 600 + (i + 0.5) * (STAGE_W - 800) / N_ENEMIES;
-      const yFrac = 0.1 + Math.random() * 0.75;
+      // Match the city / ocean spawn-altitude bias.
+      const yFrac = 0.55 + Math.random() * 0.40;
       const startY = FLIGHT_Y_MIN + yFrac * (FLIGHT_Y_MAX - FLIGHT_Y_MIN);
       enemies.push({
         x: startX, y: startY,
