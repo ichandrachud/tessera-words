@@ -152,7 +152,7 @@
     { name: 'Mistral',  file: './assets/planes-v2/Mistral.png',  hp: 110, speed:  95, speedMult: 0.95, bombs: 4, kind: 'plane', blurb: 'Workhorse fighter — solid all around.' },
     { name: 'Tsunami',  file: './assets/planes-v2/Tsunami.png',  hp: 100, speed: 100, speedMult: 1.00, bombs: 4, kind: 'plane', blurb: 'Balanced strike fighter.' },
     { name: 'Cyclone',  file: './assets/planes-v2/Cyclone.png',  hp:  80, speed: 130, speedMult: 1.15, bombs: 3, kind: 'plane', blurb: 'Fast attacker, light armour.' },
-    { name: 'Vesper',   file: './assets/planes-v2/Vesper.png',   hp:  75, speed: 135, speedMult: 1.22, bombs: 3, kind: 'plane', blurb: 'Aerobatic fighter — agile, lightly armed.' },
+    { name: 'Vesper',   file: './assets/planes-v2/Vesper.png?v=2', hp:  75, speed: 135, speedMult: 1.22, bombs: 3, kind: 'plane', blurb: 'Aerobatic fighter — agile, lightly armed.' },
     { name: 'Zephyr',   file: './assets/planes-v2/Zephyr.png',   hp:  70, speed: 140, speedMult: 1.30, bombs: 2, kind: 'plane', blurb: 'Light & nimble, fragile.' },
     { name: 'Sirocco',  file: './assets/planes-v2/Sirocco.png',  hp:  60, speed: 160, speedMult: 1.45, bombs: 2, kind: 'plane', blurb: 'Glass cannon — fastest in the sky.' },
   ];
