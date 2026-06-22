@@ -609,7 +609,19 @@
   // generous. The water surface visually extends down to ROAD_BOTTOM_Y.
   const OCEAN_WATERLINE_Y = STREET_TOP_Y - APARTMENT_RENDER_H;
   const SHIP_BODY_H = 240;          // doubled from 120 — ships now read as the heavy capital units they are
-  const SHIP_TURRET_H = 28;         // a touch larger than the building turret
+  const SHIP_TURRET_H = 42;         // 1.5x the previous 28 — reads as a real deck gun on the 240-tall hull
+  // Ships use a deeper pivot than buildings so the turret breech sits
+  // INSIDE the hull (only the upper barrel sticks above the deck), making
+  // the turret feel mounted rather than floating above the ship.
+  const SHIP_TURRET_SPEC = {
+    bodyPivotFracX: 0.50, bodyPivotFracY: 0.22,    // deeper into the deck than building's 0.06
+    turretPivotFracX: 0.50, turretPivotFracY: 0.94,
+    barrelAngleOffset: Math.PI / 2,
+  };
+  // Each ship spawns with 2 turret mount points at these horizontal
+  // fractions along the hull. Each turret tracks the player + fires
+  // independently. Hulls are wide enough at 2x scale to host both.
+  const SHIP_TURRET_MOUNTS = [0.32, 0.68];
   const SHIP_HP = 12;               // ≥ 4× a plane (planes are 3 HP) — capital ships eat bullets, fall to heavy bombs
   // The ground-target's bottom-most y. City buildings rest on the street;
   // ocean ships rest on the waterline.
@@ -935,6 +947,17 @@
       const h = SHIP_BODY_H;
       const w = h * (bodyImg.width / bodyImg.height);
       const x = 700 + (i + 0.5) * (STAGE_W - 1100) / N_SHIPS + (Math.random() - 0.5) * 240;
+      // Ships carry MULTIPLE turrets at fixed horizontal mount points along
+      // the hull. Each turret tracks the player + fires independently.
+      // turretAngle/fireAt on the parent ship are kept for back-compat (some
+      // hit-pause logic reads them) but ship update + render iterate the
+      // turrets[] array.
+      const turrets = SHIP_TURRET_MOUNTS.map(frac => ({
+        pivotXFrac: frac,
+        turretAngle: -Math.PI / 2,
+        fireAt: 0,
+        windupUntil: 0,
+      }));
       militaryBuildings.push({
         x, w, h,
         bodyImg,
@@ -949,6 +972,7 @@
         lastSmokeAt: 0,
         kind: 'ship',
         groundY: OCEAN_WATERLINE_Y,
+        turrets,
       });
     }
     spawnBonuses();
@@ -2155,35 +2179,56 @@
     const MIL_FIRE_RADIUS_SQ = MIL_FIRE_RADIUS * MIL_FIRE_RADIUS;
     const MIL_ALIGN_RAD = 0.10;
     for (const mb of militaryBuildings) {
-      const pivotX = mb.x;                                                // turret centred on body
-      const pivotY = mb.groundY - mb.h + MILITARY_TURRET_SPEC.bodyPivotFracY * mb.h;
+      // Ships use a different turret spec (deeper pivot) AND can have an
+      // array of turret mount points; everything else has the standard
+      // single-turret behaviour on mb.turretAngle/fireAt/windupUntil.
+      const isShip = mb.kind === 'ship';
+      const spec = isShip ? SHIP_TURRET_SPEC : MILITARY_TURRET_SPEC;
+      const baseTrH = isShip ? SHIP_TURRET_H : MILITARY_TURRET_H;
+      const pivotY = mb.groundY - mb.h + spec.bodyPivotFracY * mb.h;
       if (mb.alive) {
-        const desired = Math.atan2(player.y - pivotY, player.x - pivotX);
-        const diff = normalizeAngle(desired - mb.turretAngle);
-        const maxTurn = MIL_TURRET_TURN_RATE * (dt / 1000);
-        mb.turretAngle += Math.max(-maxTurn, Math.min(maxTurn, diff));
-        const dxToPlayer = player.x - pivotX;
-        const dyToPlayer = player.y - pivotY;
-        const distSqToPlayer = dxToPlayer * dxToPlayer + dyToPlayer * dyToPlayer;
-        const milReady = Math.abs(diff) < MIL_ALIGN_RAD &&
-                         distSqToPlayer < MIL_FIRE_RADIUS_SQ &&
-                         now >= mb.fireAt;
-        if (milReady && !mb.windupUntil) {
-          mb.windupUntil = now + 250;
-        }
-        if (mb.windupUntil && now >= mb.windupUntil) {
-          const barrelLen = MILITARY_TURRET_H * 0.65;
-          const mx = pivotX + Math.cos(mb.turretAngle) * barrelLen;
-          const my = pivotY + Math.sin(mb.turretAngle) * barrelLen;
-          bullets.push({
-            x: mx, y: my,
-            vx: Math.cos(mb.turretAngle) * BULLET_SPEED * 0.85,
-            vy: Math.sin(mb.turretAngle) * BULLET_SPEED * 0.85,
-            owner: 'enemy',
-            life: BULLET_LIFE_MS,
-          });
-          mb.fireAt = now + 1700 + Math.random() * 1100;
-          mb.windupUntil = 0;
+        // Track each turret independently. For ships we iterate the
+        // turrets[] array; everything else uses a synthetic single-turret
+        // record so the same loop body works for both.
+        const list = mb.turrets || [{
+          _root: true,
+          pivotXFrac: 0.5,
+          get turretAngle() { return mb.turretAngle; },
+          set turretAngle(v) { mb.turretAngle = v; },
+          get fireAt()       { return mb.fireAt; },
+          set fireAt(v)      { mb.fireAt = v; },
+          get windupUntil()  { return mb.windupUntil || 0; },
+          set windupUntil(v) { mb.windupUntil = v; },
+        }];
+        for (const t of list) {
+          const pivotX = mb.x + (t.pivotXFrac - 0.5) * mb.w;
+          const desired = Math.atan2(player.y - pivotY, player.x - pivotX);
+          const diff = normalizeAngle(desired - t.turretAngle);
+          const maxTurn = MIL_TURRET_TURN_RATE * (dt / 1000);
+          t.turretAngle += Math.max(-maxTurn, Math.min(maxTurn, diff));
+          const dxToPlayer = player.x - pivotX;
+          const dyToPlayer = player.y - pivotY;
+          const distSqToPlayer = dxToPlayer * dxToPlayer + dyToPlayer * dyToPlayer;
+          const milReady = Math.abs(diff) < MIL_ALIGN_RAD &&
+                           distSqToPlayer < MIL_FIRE_RADIUS_SQ &&
+                           now >= t.fireAt;
+          if (milReady && !t.windupUntil) {
+            t.windupUntil = now + 250;
+          }
+          if (t.windupUntil && now >= t.windupUntil) {
+            const barrelLen = baseTrH * 0.65;
+            const mx = pivotX + Math.cos(t.turretAngle) * barrelLen;
+            const my = pivotY + Math.sin(t.turretAngle) * barrelLen;
+            bullets.push({
+              x: mx, y: my,
+              vx: Math.cos(t.turretAngle) * BULLET_SPEED * 0.85,
+              vy: Math.sin(t.turretAngle) * BULLET_SPEED * 0.85,
+              owner: 'enemy',
+              life: BULLET_LIFE_MS,
+            });
+            t.fireAt = now + 1700 + Math.random() * 1100;
+            t.windupUntil = 0;
+          }
         }
       } else {
         // Burnt — continuous smoke from the roof + occasional bright embers.
@@ -2745,12 +2790,11 @@
       if (sx + mb.w / 2 < -40 || sx - mb.w / 2 > W + 40) continue;
       const bodyTop = worldToScreenY(mb.groundY - mb.h);
       if (bodyTop > H + 40) continue;
-      const spec = MILITARY_TURRET_SPEC;
-      const pivotSX = sx + (spec.bodyPivotFracX - 0.5) * mb.w;
-      const pivotSY = bodyTop + spec.bodyPivotFracY * mb.h;
+      const isShip = mb.kind === 'ship';
+      const spec = isShip ? SHIP_TURRET_SPEC : MILITARY_TURRET_SPEC;
       // Per-world turret sprite + size.
       let img, trH;
-      if (mb.kind === 'ship' && assets.shipTurret) {
+      if (isShip && assets.shipTurret) {
         img = assets.shipTurret;
         trH = SHIP_TURRET_H;
       } else if (mb.kind === 'desert' && assets.desertTurret) {
@@ -2761,24 +2805,31 @@
         trH = MILITARY_TURRET_H;
       }
       const trW = trH * (img.width / img.height);
-      ctx.save();
-      ctx.translate(pivotSX, pivotSY);
-      ctx.rotate(mb.turretAngle + spec.barrelAngleOffset);
-      const offX = -spec.turretPivotFracX * trW;
-      const offY = -spec.turretPivotFracY * trH;
-      ctx.drawImage(img, offX, offY, trW, trH);
-      // Telegraph windup — yellow muzzle pulse, growing as the shot approaches.
-      if (mb.windupUntil && mb.windupUntil > lastFrameNow) {
-        const remaining = (mb.windupUntil - lastFrameNow) / 250;
-        const pulse = 0.55 + 0.45 * Math.sin(lastFrameNow * 0.06);
-        ctx.globalAlpha = (1 - remaining) * 0.85;
-        ctx.fillStyle = '#FFD23F';
-        ctx.beginPath();
-        ctx.arc(0, -spec.turretPivotFracY * trH + trH * 0.15, 4 + 3 * pulse, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
+      // Each mount draws independently. Ships use the turrets[] array, all
+      // other buildings use a single synthetic turret at pivotXFrac 0.5.
+      const list = mb.turrets || [{ pivotXFrac: 0.5, turretAngle: mb.turretAngle, windupUntil: mb.windupUntil }];
+      for (const t of list) {
+        const pivotSX = sx + (t.pivotXFrac - 0.5) * mb.w;
+        const pivotSY = bodyTop + spec.bodyPivotFracY * mb.h;
+        ctx.save();
+        ctx.translate(pivotSX, pivotSY);
+        ctx.rotate(t.turretAngle + spec.barrelAngleOffset);
+        const offX = -spec.turretPivotFracX * trW;
+        const offY = -spec.turretPivotFracY * trH;
+        ctx.drawImage(img, offX, offY, trW, trH);
+        // Telegraph windup — yellow muzzle pulse, growing as the shot approaches.
+        if (t.windupUntil && t.windupUntil > lastFrameNow) {
+          const remaining = (t.windupUntil - lastFrameNow) / 250;
+          const pulse = 0.55 + 0.45 * Math.sin(lastFrameNow * 0.06);
+          ctx.globalAlpha = (1 - remaining) * 0.85;
+          ctx.fillStyle = '#FFD23F';
+          ctx.beginPath();
+          ctx.arc(0, -spec.turretPivotFracY * trH + trH * 0.15, 4 + 3 * pulse, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
       }
-      ctx.restore();
     }
   }
   function drawMilitaryBodies() {
