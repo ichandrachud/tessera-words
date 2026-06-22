@@ -148,7 +148,7 @@
   // Loaded only when WORLD === 'desert'. 15 building variants + 1 turret
   // sprite + the panoramic background (a 12000 x 1200 horizon strip).
   if (IS_DESERT) {
-    loadImage('./assets/desert/desertbackground.png').then(img => { assets.desertBg = img; });
+    loadImage('./assets/desert/desertbackground-7860.png').then(img => { assets.desertBg = img; });
     loadImage('./assets/desert/camo-turret.png').then(img => { assets.desertTurret = img; });
     const desertBldgIds = Array.from({ length: 15 }, (_, i) => i + 1);
     Promise.all(desertBldgIds.map(n =>
@@ -2674,16 +2674,20 @@
       return;
     }
     const img = assets.desertBg;
+    // Render at native 1:1 pixel size, world-anchored. The image's width
+    // (7860 px) matches the stage width (STAGE_W = 7680), so panning the
+    // camera reveals different portions of the panorama as the player
+    // flies. Bottom of the image aligns with STREET_TOP_Y; image world
+    // x starts at 0.
     const groundScreenY = worldToScreenY(STREET_TOP_Y);
-    if (groundScreenY > H) return;
-    // Stretch the image so it spans the full canvas width and reaches up
-    // from the ground line by its native aspect ratio.
-    const drawW = W;
-    const drawH = drawW * (img.height / img.width);
-    const topY = groundScreenY - drawH;
-    ctx.drawImage(img, 0, topY, drawW, drawH);
-    // Also fill the area BELOW the horizon with the bottom-row sand colour
-    // so the camera looking down doesn't show empty sky beneath the ground.
+    const drawW = img.width;
+    const drawH = img.height;
+    const topWorldY = STREET_TOP_Y - drawH;
+    const topScreenY = worldToScreenY(topWorldY);
+    const screenX = -cameraX;
+    ctx.drawImage(img, screenX, topScreenY, drawW, drawH);
+    // Fill below the ground line with the bottom-row sand colour so the
+    // camera looking down doesn't show empty sky beneath the horizon.
     if (groundScreenY < H) {
       ctx.fillStyle = '#a07a4c';
       ctx.fillRect(0, groundScreenY, W, H - groundScreenY);
