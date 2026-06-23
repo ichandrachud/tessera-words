@@ -327,7 +327,9 @@
     lp.frequency.value = 280;
     lp.Q.value = 0.7;
     const gain = audioCtx.createGain();
-    gain.gain.value = 0.075;
+    // Mobile speakers are closer to the ear — desktop needed the ~3x boost,
+    // mobile only needs ~1.5x. Anything more reads as blasting.
+    gain.gain.value = MODE === 'mobile' ? 0.11 : 0.22;
     // Subtle continuous tremolo for warmth (the strong "chuff" now comes
     // from the click track instead of the LFO).
     const lfo = audioCtx.createOscillator();
@@ -360,7 +362,8 @@
       lp.frequency.value = 160;
       lp.Q.value = 1.2;
       const g = audioCtx.createGain();
-      g.gain.setValueAtTime(0.028, t);
+      // Mobile gets the original (subtle) click; desktop gets crisper pops.
+      g.gain.setValueAtTime(MODE === 'mobile' ? 0.028 : 0.055, t);
       g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
       noise.connect(lp).connect(g).connect(masterGain);
       noise.stop(t + 0.07);
@@ -383,8 +386,10 @@
     engineNodes.lfo.frequency.setTargetAtTime(8 + t * 6, ct, 0.10);
     // Filter stays dull but opens with throttle.
     engineNodes.lp.frequency.setTargetAtTime(240 + t * 130, ct, 0.10);
-    // Master gain — clearly audible but soft, not a buzz.
-    engineNodes.gain.gain.setTargetAtTime(0.055 + t * 0.060, ct, 0.10);
+    // Per-platform runtime gain. Mobile keeps the legacy quieter band.
+    const baseGain = MODE === 'mobile' ? 0.080 : 0.16;
+    const swingGain = MODE === 'mobile' ? 0.075 : 0.15;
+    engineNodes.gain.gain.setTargetAtTime(baseGain + t * swingGain, ct, 0.10);
   }
 
   // Chopper engine — a deep drone plus a repeating rotor "thwop" at ~6 Hz.
