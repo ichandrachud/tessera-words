@@ -197,17 +197,6 @@
     loadImage(b.file).then(img => { b.image = img; });
   }
 
-  // ---------- BONUS PICKUPS ----------
-  // Floating in-air pickups. medical-kit restores 20 % health; gasoline
-  // adds 15 % to the plane's speed multiplier (stacks). 2-3 of each per
-  // stage. Sprite height is capped at half the plane's height so they
-  // read as a collectible, not another aircraft.
-  loadImage('./assets/bonuses/medical-kit.png').then(img => { assets.medicalKit = img; });
-  loadImage('./assets/bonuses/gasoline.png').then(img => { assets.gasoline = img; });
-  const BONUS_H = 36;                 // pixel height in world space
-  const BONUS_PICKUP_R = 32;          // pickup radius (centre-to-centre)
-  const BONUS_HP_GAIN = 20;           // medical-kit restore amount
-  const BONUS_SPEED_GAIN = 0.15;      // gasoline speed multiplier add
   Promise.all([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n =>
     loadImage(`./assets/planes-v2/enemy-aircraft${n}.png`)
   )).then(imgs => { assets.enemies = imgs.filter(Boolean); buildStageIfReady(); });
@@ -680,7 +669,6 @@
     kind: 'plane',              // 'plane' or 'chopper' — set when an aircraft is chosen
     facing: 1,                  // chopper-only: +1 = faces right, -1 = faces left (sprite flipped)
     aircraftSpeed: 1,           // per-aircraft variant multiplier; locked at selection
-    speedMult: 1,               // bonus stacking — +0.15 per gasoline pickup
   };
   // Flight inertia — angular velocity (rad/sec) carries between frames so
   // FLIGHT MODEL — heading-driven, constant speed.
@@ -688,12 +676,13 @@
   // not modulate speed; it only steers. Heading eases toward a desired
   // angle (touch position on mobile, arrow-key direction vector on desktop)
   // at a single TURN_RATE — no angular-velocity integrator, no throttle.
-  const CRUISE_SPEED = 0.154;            // px / ms — flat, both modes. ≈ +50 % over the legacy MIN_SPEED.
+  const CRUISE_SPEED = 0.18;             // px / ms — flat, both modes.
   const TURN_RATE    = 2.4;              // rad / sec — how fast the nose rotates toward a desired heading.
-  const ENEMY_MIN_SPEED = 0.0264;        // enemies retain their own speed band — they don't track the player.
-  const ENEMY_MAX_SPEED = 0.0792;
-  // Chopper: same +50 % boost, same constant-speed treatment.
-  const CHOPPER_SPEED = 0.1125;          // px / ms (was 0.075 × 1.5)
+  // Enemies scale per mission: mission 1 = 1.0x, mission 2 = 1.1x, mission 3 = 1.2x.
+  const ENEMY_DIFFICULTY = 1 + 0.10 * MISSION_INDEX;
+  const ENEMY_MIN_SPEED = 0.050 * ENEMY_DIFFICULTY;
+  const ENEMY_MAX_SPEED = 0.140 * ENEMY_DIFFICULTY;
+  const CHOPPER_SPEED = 0.135;           // px / ms (matched-feel against new CRUISE_SPEED)
   // Mirror flip — when the plane reaches horizontal-canopy-down (heading
   // ≈ ±π and sin(heading) ≈ 0), it instantly rotates 180° around its
   // longitudinal axis so the canopy is back on top. The plane keeps
@@ -706,7 +695,7 @@
   const FLIP_RESET_COS = -0.80;           // must climb back above this to re-arm
   const FLIP_RESET_SIN = 0.25;            // or pitch past this from horizontal
   function playerSpeed() {
-    return CRUISE_SPEED * player.aircraftSpeed * player.speedMult;
+    return CRUISE_SPEED * player.aircraftSpeed;
   }
 
   // ---------- CAMERA ----------
@@ -741,7 +730,6 @@
   const tanks      = [];   // { x, w, h, turretAngle, fireAt, hp, alive, spec, bodyImg, turretImg }
   const trucks     = [];   // { x, w, h, vx, hp, alive, img }
   const militaryBuildings = []; // { x, w, h, alive, hp, bodyImg, burntImg, turretAngle, fireAt, lastSmokeAt }
-  const bonuses = [];           // { x, y, kind: 'medical'|'gasoline', img, alive, bobPhase }
   // The apartment-turret source PNG points UP by default. Pivot at the
   // BREECH (bottom of source) and add π/2 to the aim angle so atan2 = 0
   // (right) rotates the upright turret 90° CW.
@@ -870,27 +858,6 @@
         groundY: STREET_TOP_Y,
       });
     }
-    spawnBonuses();
-  }
-
-  // Spread 2-3 medical-kit and 2-3 gasoline pickups across the stage at
-  // random altitudes inside the flyable band.  Called by both the city and
-  // ocean stage builders.
-  function spawnBonuses() {
-    function addOne(kind) {
-      const x = 800 + Math.random() * (STAGE_W - 1600);
-      const y = FLIGHT_Y_MIN + 60 + Math.random() * (FLIGHT_Y_MAX - FLIGHT_Y_MIN - 120);
-      bonuses.push({
-        x, y, kind,
-        img: null,                       // resolved at draw time so we don't race the asset load
-        alive: true,
-        bobPhase: Math.random() * Math.PI * 2,
-      });
-    }
-    const nMed = 2 + Math.floor(Math.random() * 2);   // 2 or 3
-    const nGas = 2 + Math.floor(Math.random() * 2);   // 2 or 3
-    for (let i = 0; i < nMed; i++) addOne('medical');
-    for (let i = 0; i < nGas; i++) addOne('gasoline');
   }
 
   // Ocean stage — water + 5 stationary enemy ships acting as ground targets.
@@ -975,7 +942,6 @@
         turrets,
       });
     }
-    spawnBonuses();
   }
 
   // Mission 3 — desert. 8 enemy planes + 15 camouflaged buildings spread
@@ -1095,7 +1061,6 @@
         });
       }
     }
-    spawnBonuses();
   }
 
   // ---------- INPUT ----------
@@ -1524,6 +1489,56 @@
   let splashStartedAt = 0;             // first-frame timestamp for the splash hold
   const SPLASH_MIN_MS = 3000;          // hold the splash for at least this long
   loadImage('./splash.jpg').then(img => { assets.splash = img; });
+
+  // ---------- LOADOUT PERSISTENCE ----------
+  // Aircraft + bomb chosen on mission 1 are remembered for the rest of the
+  // campaign so missions 2 and 3 drop the player straight into the action
+  // instead of replaying splash → intro → briefing → select → bombs.
+  // sessionStorage is the right scope: clears on browser-tab close so a
+  // fresh visit always starts from a clean chooser.
+  const LOADOUT_KEY = 'empyrean_loadout_v1';
+  let pendingLoadoutAircraft = null;
+  function saveLoadout(aircraftName, bombName) {
+    if (!aircraftName || !bombName) return;
+    try {
+      sessionStorage.setItem(LOADOUT_KEY, JSON.stringify({ aircraft: aircraftName, bomb: bombName }));
+    } catch (e) { /* sessionStorage disabled — fall back to full chooser next mission */ }
+  }
+  function loadSavedLoadout() {
+    try {
+      const raw = sessionStorage.getItem(LOADOUT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const aircraft = MISSION_1_AIRCRAFT.find(a => a.name === parsed.aircraft);
+      const bomb = MISSION_1_BOMBS.find(b => b.name === parsed.bomb);
+      if (!aircraft || !bomb) return null;
+      return { aircraft, bomb };
+    } catch (e) { return null; }
+  }
+
+  // For missions 2 and 3, replay the previously-chosen loadout and jump
+  // directly to 'playing'. Mission 1 always uses the chooser so new
+  // campaigns start fresh.
+  if (MISSION_INDEX > 0) {
+    const saved = loadSavedLoadout();
+    if (saved) {
+      if (saved.aircraft.image) assets.player = saved.aircraft.image;
+      player.kind = saved.aircraft.kind;
+      player.heading = 0;
+      player.throttle = 1;
+      player.facing = 1;
+      player.aircraftSpeed = saved.aircraft.speedMult || 1;
+      if (saved.aircraft.hp) {
+        player.maxHp = saved.aircraft.hp;
+        player.hp = saved.aircraft.hp;
+      }
+      equippedBomb = saved.bomb;
+      pendingLoadoutAircraft = saved.aircraft.name;
+      scene = 'playing';
+      startGameAudio();
+    }
+  }
+
   let gameOver = false;
   // Game-feel ROUND 1 state ------------------------------------------------
   // Hit-pause: when set, update() short-circuits until `now >= frozenUntil`.
@@ -1647,6 +1662,7 @@
           player.maxHp = aircraftChosen.hp;
           player.hp = aircraftChosen.hp;
         }
+        pendingLoadoutAircraft = aircraftChosen.name;
         scene = 'bombs';
         aircraftChosen = null;
       }
@@ -1655,6 +1671,7 @@
     if (scene === 'bombs') {
       if (bombChosen) {
         equippedBomb = bombChosen;
+        saveLoadout(pendingLoadoutAircraft, equippedBomb.name);
         scene = 'playing';
         bombChosen = null;
         startGameAudio();
@@ -1700,7 +1717,7 @@
       const moveThreshold = usingTouch ? 4 : 0.05;
       if (mag > moveThreshold) {
         const inv = 1 / mag;
-        const sp = CHOPPER_SPEED * player.speedMult;
+        const sp = CHOPPER_SPEED;
         player.x += vx * inv * sp * dt;
         player.y += vy * inv * sp * dt;
       }
@@ -1843,38 +1860,6 @@
     }
 
 
-    // ----- Bonus pickups -----
-    // Each pickup hovers in place with a subtle vertical bob. Player overlap
-    // (pickup radius) consumes the pickup and applies its effect.
-    for (const bo of bonuses) {
-      if (!bo.alive) continue;
-      bo.bobPhase += dt * 0.003;
-      const yBob = Math.sin(bo.bobPhase) * 4;
-      const dx = player.x - bo.x;
-      const dy = player.y - (bo.y + yBob);
-      if (dx * dx + dy * dy <= BONUS_PICKUP_R * BONUS_PICKUP_R) {
-        bo.alive = false;
-        if (bo.kind === 'medical') {
-          player.hp = Math.min(player.maxHp, player.hp + BONUS_HP_GAIN);
-          sfxPickup('bright');
-        } else if (bo.kind === 'gasoline') {
-          player.speedMult += BONUS_SPEED_GAIN;
-          sfxPickup('warm');
-        }
-        // Little spark cluster for feedback.
-        for (let i = 0; i < 8; i++) {
-          const a = Math.random() * Math.PI * 2;
-          const s = 0.4 + Math.random() * 0.6;
-          particles.push({
-            kind: 'spark', x: bo.x, y: bo.y + yBob,
-            vx: Math.cos(a) * s, vy: Math.sin(a) * s,
-            life0: 500, life: 500, r0: 2 + Math.random() * 2,
-            color: bo.kind === 'medical' ? '#FFFFFF' : '#FFD23F',
-          });
-        }
-      }
-    }
-
     // ----- Fire (Space) -----
     if (keys[' '] && (now - lastShotAt) >= FIRE_INTERVAL) {
       spawnPlayerBullet();
@@ -2010,17 +1995,16 @@
     // chase heading so the squadron weaves through the sky instead of riding
     // a perfect pursuit curve onto the hero. Each enemy refreshes its
     // wander offset on its own clock so the swarm desynchronises.
-    const WAKE_RANGE_X = 1.2 * W;
-    const FIRE_RANGE   = 360;
-    const ALIGN_RAD    = 0.10;
-    const ENEMY_ANG_MAX   = 1.2;            // rad/sec — max turn rate
-    const ENEMY_ANG_ACCEL = 4.0;            // rate angVel approaches desired
-    const ENEMY_WANDER_MIX = 0.30;
+    const WAKE_RANGE_X = 1.4 * W;
+    const FIRE_RANGE   = 480;
+    const ALIGN_RAD    = 0.18;
+    const ENEMY_ANG_MAX   = 1.9 * ENEMY_DIFFICULTY;   // rad/sec — max turn rate
+    const ENEMY_ANG_ACCEL = 5.0;            // rate angVel approaches desired
+    const ENEMY_WANDER_MIX = 0.20;          // tighter pursuit, less weaving
 
-    // Cap concurrent awake enemies at 2: only the two closest live enemies
-    // within wake range are activated each frame. When one dies, the next
-    // closest joins the fight.
-    const ACTIVE_ENEMY_CAP = 2;
+    // Cap concurrent awake enemies at 3 (was 2): more pressure, fewer
+    // moments where the hero can pick stragglers off solo.
+    const ACTIVE_ENEMY_CAP = 3;
     const wakeCandidates = enemies
       .filter(e => e.alive && Math.abs(player.x - e.x) < WAKE_RANGE_X)
       .map(e => ({ e, d: Math.hypot(player.x - e.x, player.y - e.y) }))
@@ -2091,8 +2075,9 @@
         }
       }
 
-      // Throttle: cruise / dash both ~40 % lower than the previous values.
-      const targetThrottle = dist > 600 ? 0.50 : 0.32;
+      // Throttle: chase hard when far, ease off when close-quarters so
+      // they actually engage instead of overshooting.
+      const targetThrottle = dist > 600 ? 0.95 : 0.55;
       en.throttle += (targetThrottle - en.throttle) * (dt / 600);
 
       const enSp = ENEMY_MIN_SPEED + (ENEMY_MAX_SPEED - ENEMY_MIN_SPEED) * en.throttle;
@@ -2128,7 +2113,7 @@
       const aimDiff = normalizeAngle(pursuit - en.heading);
       if (Math.abs(aimDiff) < ALIGN_RAD && dist < FIRE_RANGE && now >= en.fireAt) {
         spawnEnemyBullet(en);
-        en.fireAt = now + 900 + Math.random() * 700;
+        en.fireAt = now + (500 + Math.random() * 500) / ENEMY_DIFFICULTY;
       }
     }
 
@@ -3149,22 +3134,6 @@
       drawPropeller(lastFrameNow, targetW / 2 - 4, 0, targetH);
     }
     ctx.restore();
-  }
-
-  function drawBonuses(now) {
-    for (const bo of bonuses) {
-      if (!bo.alive) continue;
-      const img = bo.kind === 'medical' ? assets.medicalKit : assets.gasoline;
-      if (!img) continue;
-      const aspect = img.width / img.height;
-      const targetH = BONUS_H;
-      const targetW = targetH * aspect;
-      const yBob = Math.sin(bo.bobPhase) * 4;
-      const sx = worldToScreenX(bo.x);
-      const sy = worldToScreenY(bo.y + yBob);
-      if (sx < -targetW || sx > W + targetW || sy < -targetH || sy > H + targetH) continue;
-      ctx.drawImage(img, sx - targetW / 2, sy - targetH / 2, targetW, targetH);
-    }
   }
 
   function drawPlayer(now) {
@@ -4357,7 +4326,6 @@
     drawTankTurrets();      // turret barrel renders behind the body
     drawTrucks();
     drawTankBodies();       // body silhouette covers the turret breech
-    drawBonuses(now);
     drawEnemies();
     drawPlayer(now);
     drawBullets();
