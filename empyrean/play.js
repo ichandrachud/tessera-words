@@ -197,7 +197,7 @@
     loadImage(b.file).then(img => { b.image = img; });
   }
 
-  Promise.all([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n =>
+  Promise.all([1, 4, 5, 6, 7, 9, 10, 11].map(n =>
     loadImage(`./assets/planes-v2/enemy-aircraft${n}.png`)
   )).then(imgs => { assets.enemies = imgs.filter(Boolean); buildStageIfReady(); });
   Promise.all([1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23].map(n =>
@@ -1152,6 +1152,12 @@
       window.location.href = window.location.pathname + '?mission=1';
       return;
     }
+    // Death modal — tap on the button respawns; tap anywhere else also
+    // respawns (cheap forgiving fallback so a misclick still works).
+    if (playerDead) {
+      advanceRequested = true;
+      return;
+    }
     // Intro: any tap advances. Briefing: only a tap on the Accept Mission button advances.
     if (scene === 'intro') {
       advanceRequested = true;
@@ -1245,6 +1251,11 @@
       window.location.href = window.location.pathname + '?mission=1';
       return;
     }
+    if (playerDead) {
+      // Mouse click anywhere advances; button hit specifically also OK.
+      advanceRequested = true;
+      return;
+    }
     if (scene === 'intro' && startButtonRect && inRect(startButtonRect, p.x, p.y)) {
       advanceRequested = true;
       return;
@@ -1277,7 +1288,11 @@
     startButtonHover = acceptButtonHover = selectPrevHover = selectNextHover = selectChooseHover = false;
     bombPrevHover = bombNextHover = bombEquipHover = false;
     playAgainHover = false;
-    if (gameOver && playAgainRect) {
+    respawnHover = false;
+    if (playerDead && respawnRect) {
+      respawnHover = inRect(respawnRect, p.x, p.y);
+      hovering = respawnHover;
+    } else if (gameOver && playAgainRect) {
       playAgainHover = inRect(playAgainRect, p.x, p.y);
       hovering = playAgainHover;
     } else if (scene === 'intro') {
@@ -1595,6 +1610,16 @@
   // all lives are gone.
   const STARTING_LIVES = 4;
   let livesRemaining = STARTING_LIVES;
+  // Player-death modal — when a single life is lost (but more remain) the game
+  // pauses on a "Plane suffered too much damage" card with a Take-off-again
+  // button. Without this beat the respawn was instant and players didn't
+  // realise they'd lost a life. Setting playerDead freezes the gameplay
+  // update loop but lets particles continue (so the explosion plays out).
+  let playerDead = false;
+  let playerDeathAt = 0;
+  const DEATH_HOLD_MS = 350;     // wait this long before the modal fades in
+  let respawnRect = null;        // hit area for the "Take off again" button
+  let respawnHover = false;
   let win = false;
   function targetsRemaining() {
     // Apartments are background scenery — only planes, tanks, and trucks
@@ -1681,6 +1706,32 @@
     if (gameOver) return;
     if (paused) return;       // freeze all gameplay updates while paused
     if (now < frozenUntil) return;   // hit-pause: brief freeze on impact moments
+    // Player-death modal — gameplay frozen, but keep particles ticking so the
+    // explosion plays out behind the overlay. Respawn fires on the first
+    // advance edge (Space / Enter / tap) once the modal has had its hold.
+    if (playerDead) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx * (dt / 16);
+        p.y += p.vy * (dt / 16);
+        const damp = p.kind === 'smoke' ? 0.94 : (p.kind === 'spark' ? 0.97 : 1);
+        p.vx *= damp; p.vy *= damp;
+        p.life -= dt;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+      if (now - playerDeathAt > DEATH_HOLD_MS + 200 && advanceRequested) {
+        player.hp = player.maxHp;
+        player.invulnUntil = now + 1500;
+        player.x = 220;
+        player.y = H * 0.52;
+        player.heading = 0;
+        player.throttle = 0;
+        player.facing = 1;
+        playerDead = false;
+        advanceRequested = false;
+      }
+      return;
+    }
 
     if (player.kind === 'chopper') {
       // ----- Chopper flight -----
@@ -2451,20 +2502,20 @@
         }
       }
     }
-    if (player.hp <= 0) {
+    if (player.hp <= 0 && !playerDead) {
       spawnExplosion(player.x, player.y, true);
+      bombFlash(now, 14, 240);          // screen shake + white flash for impact
+      hitpause(now, 280);                // brief freeze so the hit registers
       livesRemaining -= 1;
       if (livesRemaining <= 0) {
         gameOver = true; win = false;
       } else {
-        // Respawn — full HP, brief invuln, back to a safe start position.
-        player.hp = player.maxHp;
-        player.invulnUntil = now + 1500;
-        player.x = 220;
-        player.y = H * 0.52;
-        player.heading = 0;
-        player.throttle = 0;
-        player.facing = 1;
+        // Enter the death-modal state. The actual respawn happens in the
+        // playerDead branch of update() when the player taps to continue,
+        // so they get a clear "you lost a plane" beat first.
+        playerDead = true;
+        playerDeathAt = now;
+        advanceRequested = false;     // discard any leftover input edge
       }
     }
 
@@ -3142,6 +3193,7 @@
 
   function drawPlayer(now) {
     if (!assets.player) return;
+    if (playerDead) return;           // sprite is hidden while the death modal is up
     // Smooth ghosted invulnerability — alpha pulses between 0.25 and 0.85
     // during the invuln window. Reads less jarring than the old 8 Hz flicker.
     let alpha = 1;
@@ -3446,6 +3498,60 @@
       const sub = isLastMission ? 'Looping back to Mission 1…' : 'Next mission incoming…';
       ctx.fillText(sub, W / 2, H / 2 + 28);
     }
+    ctx.restore();
+  }
+
+  // Single-life death modal — shown when the player loses a life but more
+  // remain. Fades in after DEATH_HOLD_MS so the big explosion has time to
+  // read, then waits for Space/Tap to respawn. The `if (livesRemaining > 0)`
+  // gameOver branch handles the campaign-ending case via drawGameOverOverlay
+  // above; this one is purely "you lost one of your planes".
+  function drawDeathOverlay() {
+    if (!playerDead) { respawnRect = null; return; }
+    const elapsed = lastFrameNow - playerDeathAt;
+    if (elapsed < DEATH_HOLD_MS) return;
+    const fade = Math.min(1, (elapsed - DEATH_HOLD_MS) / 400);
+    ctx.save();
+    ctx.fillStyle = `rgba(2, 6, 17, ${(0.72 * fade).toFixed(2)})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = fade;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    ctx.fillStyle = '#FF6B5C';
+    ctx.font = '900 36px Inter, sans-serif';
+    ctx.fillText('Plane suffered too much damage', W / 2, H / 2 - 70);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = '600 18px Inter, sans-serif';
+    const livesLabel = livesRemaining === 1 ? '1 plane left' : `${livesRemaining} planes left`;
+    ctx.fillText(livesLabel, W / 2, H / 2 - 26);
+
+    const btnW = 240, btnH = 52;
+    const btnX = Math.round(W / 2 - btnW / 2);
+    const btnY = Math.round(H / 2 + 14);
+    respawnRect = { x: btnX, y: btnY, w: btnW, h: btnH };
+    const pulse = 0.5 + 0.5 * Math.sin(lastFrameNow * 0.003);
+    ctx.fillStyle = '#cc2200';
+    roundRect(btnX, btnY, btnW, btnH, 10);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    const borderAlpha = respawnHover ? 0.95 : 0.45 + 0.25 * pulse;
+    ctx.strokeStyle = `rgba(120, 20, 0, ${borderAlpha.toFixed(2)})`;
+    roundRect(btnX, btnY, btnW, btnH, 10);
+    ctx.stroke();
+    if (respawnHover) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.10)';
+      roundRect(btnX, btnY, btnW, btnH, 10);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '700 18px Inter, sans-serif';
+    ctx.fillText('Take off in a new plane', btnX + btnW / 2, btnY + btnH / 2 + 1);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.font = '500 14px Inter, sans-serif';
+    ctx.fillText('or press SPACE', W / 2, btnY + btnH + 22);
     ctx.restore();
   }
 
@@ -4356,6 +4462,7 @@
     }
     drawHUD();
     drawGameOverOverlay();
+    drawDeathOverlay();
     if (paused && !gameOver) drawPauseOverlay();
   }
 
