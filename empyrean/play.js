@@ -2810,9 +2810,10 @@
     if (!assets.militaryTurret && !assets.shipTurret && !assets.desertTurret) return;
     for (const mb of militaryBuildings) {
       if (!mb.alive) continue;
-      // Desert bunkers: no turret sprite — the bullets emerge from the
-      // building itself. Skip the turret-draw entirely for them.
-      if (mb.kind === 'desert') continue;
+      // Desert bunkers and ocean ships: no turret sprite — the bullets
+      // emerge from the body itself. Skip the turret-draw entirely.
+      // Apartments (city/street) still render their turrets normally.
+      if (mb.kind === 'desert' || mb.kind === 'ship') continue;
       const sx = worldToScreenX(mb.x);
       if (sx + mb.w / 2 < -40 || sx - mb.w / 2 > W + 40) continue;
       const bodyTop = worldToScreenY(mb.groundY - mb.h);
