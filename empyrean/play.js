@@ -148,7 +148,7 @@
   // Loaded only when WORLD === 'desert'. 15 building variants + 1 turret
   // sprite + the panoramic background (a 12000 x 1200 horizon strip).
   if (IS_DESERT) {
-    loadImage('./assets/desert/desertbackground-7860.png').then(img => { assets.desertBg = img; });
+    loadImage('./assets/desert/desertbackground-7860.png?v=2').then(img => { assets.desertBg = img; });
     loadImage('./assets/desert/camo-turret.png').then(img => { assets.desertTurret = img; });
     const desertBldgIds = Array.from({ length: 15 }, (_, i) => i + 1);
     Promise.all(desertBldgIds.map(n =>
@@ -1032,70 +1032,66 @@
     const N_BACKGROUND = 7;
     const N_FOREGROUND = N_TOTAL - N_BACKGROUND;     // = 8 front-row
     const N_TURRETS    = 6;                          // 6 of the 8 front-row have turrets
-    // Background row — smaller silhouettes drawn closer to the horizon.
-    // Stored in `apartments` (the scenery array) so they re-use the
-    // existing render pipeline. No HP, can't be destroyed.
-    for (let i = 0; i < N_BACKGROUND; i++) {
-      const img = assets.desertBldgs[idxs[i] % assets.desertBldgs.length];
-      const scale = 0.42 + Math.random() * 0.18;     // 0.42 - 0.60
-      const baseH = 150;
-      const h = baseH * scale;
-      const w = h * (img.width / img.height);
-      // Spread across the stage with some random jitter so back-row
-      // buildings don't line up exactly with front-row ones.
-      const x = 400 + (i + 0.5) * (STAGE_W - 800) / N_BACKGROUND + (Math.random() - 0.5) * 320;
-      // Drawn HIGHER than ground level (closer to the horizon). We give
-      // these a fake `groundY` so the existing draw pipeline works.
-      const horizonLift = 28 + Math.random() * 16;
-      apartments.push({
-        x, w, h,
-        img,
-        alive: true,
-        hp: 999,                          // effectively indestructible
-        groundY: STREET_TOP_Y - horizonLift,
-        depth: 'back',
-      });
-    }
-    // Foreground buildings — full scale, on the ground. 6 of 8 carry turrets.
+    // 15 buildings scattered across the stage with depth-correlated size.
+    // Each building's groundY is determined by its SCALE: bigger = closer
+    // (groundY lower on screen, larger world Y), smaller = farther
+    // (groundY higher up on grass, smaller world Y). This places them
+    // throughout the depth of field rather than all on one ground line.
+    //
+    // groundY band: wide enough that depth reads clearly. Smallest scale
+    // sits at the horizon (top of band, ~108 px above STREET_TOP_Y);
+    // largest sits at image bottom (~60 px below STREET_TOP_Y). The
+    // 160-ish band is what makes the size-to-distance relationship
+    // visible — a narrow band collapses the perspective.
+    const GROUND_BAND_TOP    = STREET_TOP_Y - 100; // farthest = small, near horizon
+    const GROUND_BAND_BOTTOM = STREET_TOP_Y + 60;  // closest = large, near image base
     const turretMask = [];
-    for (let i = 0; i < N_FOREGROUND; i++) turretMask.push(i < N_TURRETS);
+    for (let i = 0; i < N_TOTAL; i++) turretMask.push(i < N_TURRETS);
     for (let k = turretMask.length - 1; k > 0; k--) {
       const j = Math.floor(Math.random() * (k + 1));
       [turretMask[k], turretMask[j]] = [turretMask[j], turretMask[k]];
     }
-    for (let i = 0; i < N_FOREGROUND; i++) {
-      const img = assets.desertBldgs[idxs[N_BACKGROUND + i] % assets.desertBldgs.length];
-      const baseH = 180;
-      const scale = 0.95 + Math.random() * 0.12;    // 0.95 - 1.07
+    for (let i = 0; i < N_TOTAL; i++) {
+      const img = assets.desertBldgs[idxs[i] % assets.desertBldgs.length];
+      // Wide scale range — some near, some far. Each scale value implies
+      // a depth, which dictates the groundY.
+      const scale = 0.40 + Math.random() * 0.90;    // 0.40 - 1.30
+      const baseH = 200;
       const h = baseH * scale;
       const w = h * (img.width / img.height);
-      const x = 700 + (i + 0.5) * (STAGE_W - 1300) / N_FOREGROUND + (Math.random() - 0.5) * 180;
+      // Spread across the full stage horizontally with random jitter.
+      const x = 400 + (i + 0.5) * (STAGE_W - 800) / N_TOTAL + (Math.random() - 0.5) * 260;
+      // Depth: scale 0.40 = farthest (groundY at top of band),
+      //        scale 1.30 = closest (groundY at bottom of band).
+      const depthFrac = (scale - 0.40) / 0.90;                  // 0..1
+      const groundY = GROUND_BAND_TOP + depthFrac * (GROUND_BAND_BOTTOM - GROUND_BAND_TOP);
       if (turretMask[i]) {
-        // Armed bunker — counts toward stage clear. Uses the same render
-        // path as city military buildings; desertTurret sprite drives the
-        // turret render (a render branch in drawMilitaryTurrets).
+        // Armed bunker — counts toward stage clear. Bullets emerge from
+        // the building's roof (no turret sprite — see drawMilitaryTurrets).
         militaryBuildings.push({
           x, w, h,
           bodyImg: img,
-          burntImg: img,                  // no dedicated burnt variant; same hull
+          burntImg: img,
           alive: true,
           hp: 6,
           turretAngle: -Math.PI / 2,
           fireAt: 0,
           lastSmokeAt: 0,
           kind: 'desert',
-          groundY: STREET_TOP_Y,
+          groundY,
+          castsShadow: true,
         });
       } else {
-        // Silent bunker — scenery only, but with HP so player bombs can
-        // still chew it up for fun. Doesn't gate stage clear.
+        // Unarmed scenery — small/distant ones are indestructible
+        // silhouettes, larger ones are bombable but don't gate stage clear.
         apartments.push({
           x, w, h,
           img,
           alive: true,
-          hp: 2,
-          groundY: STREET_TOP_Y,
-          depth: 'front',
+          hp: scale < 0.7 ? 999 : 2,
+          groundY,
+          depth: scale < 0.7 ? 'back' : 'front',
+          castsShadow: true,
         });
       }
     }
@@ -2688,6 +2684,11 @@
     const topWorldY = DESERT_BG_BOTTOM_Y - drawH;
     const topScreenY = worldToScreenY(topWorldY);
     const screenX = -cameraX;
+    // Brightness-boost via canvas filter — the source PNG has a darker
+    // middle band (~25 % dimmer than the edges) painted in. Bumping
+    // brightness + a tiny saturation lift normalises the appearance so
+    // the world doesn't visibly "go dark" as the camera pans into the
+    // middle of the stage.
     ctx.drawImage(img, screenX, topScreenY, drawW, drawH);
     // Below the image bottom: sample-green fallback so the area beneath
     // the strip blends with the image's grass when the camera looks low.
@@ -2772,6 +2773,12 @@
         const ground = (a.groundY !== undefined) ? a.groundY : STREET_TOP_Y;
         const top = worldToScreenY(ground - a.h);
         if (top > H + 10) continue;
+        // Drop-shadow ellipse at the building's base — opt-in via
+        // a.castsShadow. Darker so the building reads as planted, not
+        // floating. Back-row buildings get a softer shadow (less haze).
+        if (a.castsShadow) {
+          drawBuildingShadow(sx, worldToScreenY(ground), a.w, a.depth === 'back' ? 0.40 : 0.65);
+        }
         // Slight haze on back-row buildings to suggest distance.
         if (a.depth === 'back') {
           ctx.save();
@@ -2785,6 +2792,24 @@
     }
   }
 
+  // Soft elliptical shadow on the ground beneath a BUILDING (distinct
+  // from drawGroundShadow which is the tank/truck variant anchored to
+  // ROAD_BOTTOM_Y). Different name avoids the JS-hoisting clobber where
+  // the later `drawGroundShadow` declaration silently overrode this one.
+  function drawBuildingShadow(screenCx, screenGroundY, worldW, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Soft blur on the shadow ellipse so it reads as a real cast shadow
+    // rather than a hard black blob. Wider + slightly taller to compensate
+    // for the alpha-fade at the blurred edges.
+    ctx.filter = 'blur(5px)';
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(screenCx, screenGroundY + 2, worldW * 0.50, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Military buildings render in two passes like tanks: turret (behind) +
   // body (in front), so only the barrel sticks above the building. When
   // burnt, swap to the burnt body sprite and skip the turret entirely
@@ -2794,6 +2819,9 @@
     if (!assets.militaryTurret && !assets.shipTurret && !assets.desertTurret) return;
     for (const mb of militaryBuildings) {
       if (!mb.alive) continue;
+      // Desert bunkers: no turret sprite — the bullets emerge from the
+      // building itself. Skip the turret-draw entirely for them.
+      if (mb.kind === 'desert') continue;
       const sx = worldToScreenX(mb.x);
       if (sx + mb.w / 2 < -40 || sx - mb.w / 2 > W + 40) continue;
       const bodyTop = worldToScreenY(mb.groundY - mb.h);
@@ -2805,9 +2833,6 @@
       if (isShip && assets.shipTurret) {
         img = assets.shipTurret;
         trH = SHIP_TURRET_H;
-      } else if (mb.kind === 'desert' && assets.desertTurret) {
-        img = assets.desertTurret;
-        trH = MILITARY_TURRET_H;
       } else {
         img = assets.militaryTurret;
         trH = MILITARY_TURRET_H;
@@ -2851,6 +2876,10 @@
       const img = mb.alive ? mb.bodyImg : mb.burntImg;
       if (!img) continue;
       const drawX = sx - mb.w / 2;
+      // Shadow on the ground beneath buildings that opt in.
+      if (mb.castsShadow) {
+        drawBuildingShadow(sx, worldToScreenY(mb.groundY), mb.w, 0.65);
+      }
       ctx.drawImage(img, drawX, top, mb.w, mb.h);
       if (mb.flashUntil && mb.flashUntil > lastFrameNow) {
         drawHitFlash(img, drawX, top, mb.w, mb.h, (mb.flashUntil - lastFrameNow) / 60);
