@@ -3121,12 +3121,15 @@
       //              internal frame, so scale(-1, 1) + rotate(heading)
       //              composes to the right world nose direction.
       //   render-only — enemy's mirror state: heading is the true world
-      //                 direction, sprite is just mirrored visually.
-      //                 Needs rotate(heading + π) so the nose still
-      //                 points at the world heading after the mirror.
+      //                 direction. Applying scale(-1, 1) then
+      //                 rotate(π - heading) lands the sprite nose at
+      //                 (cos heading, sin heading) — i.e. world heading.
+      //                 (Earlier code used (heading - π), which is the
+      //                 same in cos but flips sin — sprites then read
+      //                 as "diving when climbing" and vice versa.)
       if (flipped) {
         ctx.scale(-1, 1);
-        ctx.rotate(mirrorMode === 'render-only' ? (heading - Math.PI) : heading);
+        ctx.rotate(mirrorMode === 'render-only' ? (Math.PI - heading) : heading);
       } else {
         ctx.rotate(heading);
       }
