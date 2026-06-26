@@ -40,7 +40,7 @@
     // Inline-style CSS vars so .game-wrap renders at the same dimensions.
     document.body.style.setProperty('--canvas-w', vw + 'px');
     document.body.style.setProperty('--canvas-h', vh + 'px');
-    return { W: vw, H: vh, COLS: 6, ROWS: 13, CELL, HUD_H, BANNER_W: 320, BANNER_H };
+    return { W: vw, H: vh, COLS: 7, ROWS: 13, CELL, HUD_H, BANNER_W: 320, BANNER_H };
   }
   const CFG = MODE === 'mobile' ? buildMobileCFG() : (() => {
     const desktopCFG = {
@@ -110,6 +110,14 @@
   const HUD_H  = CFG.HUD_H;
   const GRID_X = Math.floor((W - GRID_W) / 2);
   const GRID_Y = HUD_H + 8;
+
+  // Four evenly-spread HUD columns: sound · SCORE · WORDS · NEXT. The outer
+  // two are inset ~half a tile from the grid's left/right edges so the row
+  // spans the full board width; the inner two sit evenly between.
+  const HUD_EDGE = 12;
+  const HUD_L = GRID_X + HUD_EDGE;
+  const HUD_R = GRID_X + GRID_W - HUD_EDGE;
+  const HUD_COLS = [0, 1, 2, 3].map(i => HUD_L + (HUD_R - HUD_L) * i / 3);
 
   // Banner ad slot — only drawn in mobile mode (BANNER_H = 0 on desktop).
   const BANNER_W = CFG.BANNER_W;
@@ -525,18 +533,15 @@
   }
 
   function drawSoundButton() {
-    const size = 24;
-    const padding = 8;
-    const bx = padding;
-    const by = padding;
-    SOUND_BTN.x = bx; SOUND_BTN.y = by; SOUND_BTN.w = size; SOUND_BTN.h = size;
+    // First of the four HUD columns. Just the speaker glyph — no background
+    // panel — so it reads as a clean icon matching SCORE/WORDS/NEXT. Centred
+    // on its column, vertically between the title row (y16) and value row (y38).
+    const cx = HUD_COLS[0];
+    const cy = 27;
+    // Comfortable 32×32 tap target around the glyph.
+    SOUND_BTN.x = cx - 16; SOUND_BTN.y = cy - 16; SOUND_BTN.w = 32; SOUND_BTN.h = 32;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
-    roundRect(bx, by, size, size, 5);
-    ctx.fill();
-    const cx = bx + size / 2;
-    const cy = by + size / 2;
     ctx.fillStyle = sfx.isOn() ? C.text : C.textMute;
     ctx.strokeStyle = sfx.isOn() ? C.text : C.textMute;
     ctx.lineWidth = 1.4;
@@ -557,55 +562,53 @@
       ctx.strokeStyle = C.accent;
       ctx.lineWidth = 1.8;
       ctx.beginPath();
-      ctx.moveTo(bx + 4, by + size - 4);
-      ctx.lineTo(bx + size - 4, by + 4);
+      ctx.moveTo(cx - 8, cy + 8);
+      ctx.lineTo(cx + 8, cy - 8);
       ctx.stroke();
     }
     ctx.restore();
   }
 
   function drawHUD() {
-    // SCORE column — left-aligned to the GRID's left edge
-    ctx.font = '700 11px Inter, sans-serif';
-    ctx.fillStyle = C.textMute;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('SCORE', GRID_X, 16);
-    ctx.font = '800 24px Inter, sans-serif';
-    ctx.fillStyle = C.text;
-    ctx.fillText(String(score), GRID_X, 38);
+    // Columns 2–4 of the four-column HUD (column 1 is the sound icon, drawn by
+    // drawSoundButton). Each value sits centred directly under its title.
+    const colSCORE = HUD_COLS[1];
+    const colWORDS = HUD_COLS[2];
+    const colNEXT  = HUD_COLS[3];
 
-    // WORDS — centred on the canvas (also centre of the grid)
-    ctx.font = '700 11px Inter, sans-serif';
-    ctx.fillStyle = C.textMute;
     ctx.textAlign = 'center';
-    ctx.fillText('WORDS', W / 2, 16);
-    ctx.font = '800 24px Inter, sans-serif';
-    ctx.fillStyle = C.text;
-    ctx.fillText(String(wordsFound), W / 2, 38);
+    ctx.textBaseline = 'middle';
 
-    // NEXT column — right-aligned to the GRID's right edge
-    const RIGHT_EDGE = GRID_X + GRID_W;
+    // Titles
     ctx.font = '700 11px Inter, sans-serif';
     ctx.fillStyle = C.textMute;
-    ctx.textAlign = 'right';
-    ctx.fillText('NEXT', RIGHT_EDGE, 16);
+    ctx.fillText('SCORE', colSCORE, 16);
+    ctx.fillText('WORDS', colWORDS, 16);
+    ctx.fillText('NEXT',  colNEXT,  16);
+
+    // SCORE + WORDS values
+    ctx.font = '800 24px Inter, sans-serif';
+    ctx.fillStyle = C.text;
+    ctx.fillText(String(score), colSCORE, 38);
+    ctx.fillText(String(wordsFound), colWORDS, 38);
+
+    // NEXT value — the upcoming tile, centred under its title.
+    //   Title baseline middle: y=16 (text spans ~10–22)
+    //   Tile spans 26–50, so ≥4 px clear of the title above and the playfield
+    //   below (playfield card starts at GRID_Y - 10 = 54).
     if (nextLetter) {
-      // Tile sits in the value-row alongside SCORE/WORDS numerics.
-      //   Label baseline middle: y=16 (text spans ~10–22)
-      //   Tile spans 26–50, so ≥4 px clear of the label above and the playfield below
-      //   (playfield card starts at GRID_Y - 10 = 54).
       const sz = 24;
-      const previewX = RIGHT_EDGE - sz, previewY = 26;
+      const previewX = colNEXT - sz / 2, previewY = 26;
       const [body, top] = tileColor();
       drawTileAt(previewX, previewY, sz, nextLetter, body, top, 1);
     }
   }
 
   function drawPlayfield() {
-    // Soft outer card
+    // Playfield backing — wraps the cells tightly (no protruding outer frame).
+    // It only shows through the gaps between cells, keeping the checker look.
     ctx.fillStyle = C.playfield;
-    roundRect(GRID_X - 10, GRID_Y - 10, GRID_W + 20, GRID_H + 20, 14);
+    roundRect(GRID_X, GRID_Y, GRID_W, GRID_H, 10);
     ctx.fill();
 
     // Column hover guide (under active tile)
