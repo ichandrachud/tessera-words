@@ -154,8 +154,8 @@
   // by sprites it never uses. buildStageIfReady checks for these specifically
   // when the world is ocean.
   if (IS_OCEAN) {
-    loadImage('./assets/ocean/water.jpg').then(img => { assets.water = img; });
-    loadImage('./assets/ocean/ship-turret.png').then(img => { assets.shipTurret = img; });
+    loadImage('./assets/ocean/water.jpg').then(img => { assets.water = img; buildStageIfReady(); });
+    loadImage('./assets/ocean/ship-turret.png').then(img => { assets.shipTurret = img; buildStageIfReady(); });
     Promise.all([1, 2, 3, 4, 5].map(n =>
       loadImage(`./assets/ocean/enemy-ship-0${n}.png`)
     )).then(imgs => { assets.ships = imgs.filter(Boolean); buildStageIfReady(); });
@@ -173,8 +173,8 @@
   // Loaded only when WORLD === 'desert'. 15 building variants + 1 turret
   // sprite + the panoramic background (a 12000 x 1200 horizon strip).
   if (IS_DESERT) {
-    loadImage('./assets/desert/desertbackground-7860.png?v=2').then(img => { assets.desertBg = img; });
-    loadImage('./assets/desert/camo-turret.png').then(img => { assets.desertTurret = img; });
+    loadImage('./assets/desert/desertbackground-7860.png?v=2').then(img => { assets.desertBg = img; buildStageIfReady(); });
+    loadImage('./assets/desert/camo-turret.png').then(img => { assets.desertTurret = img; buildStageIfReady(); });
     const desertBldgIds = Array.from({ length: 15 }, (_, i) => i + 1);
     Promise.all(desertBldgIds.map(n =>
       loadImage(`./assets/desert/camo-bldg-${n}.png`)
